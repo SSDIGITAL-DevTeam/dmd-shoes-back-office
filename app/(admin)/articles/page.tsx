@@ -1,0 +1,245 @@
+"use client";
+
+import React, { useMemo, useState } from "react";
+import { NewNounButton } from "@/components/ui/AddButton";
+import { StatusBadge } from "@/components/ui/StatusBadge";
+import ToggleSwitch from "@/components/ui/ToggleSwitch";
+import { EditButton } from "@/components/ui/EditIcon";
+import { DeleteButton } from "@/components/ui/DeleteIcon";
+import { Pagination } from "@/components/layout/Pagination";
+
+// --- Sample data
+const sampleArticles = [
+  { id: 1, cover: "/api/placeholder/50/50", title: "Cara Memilih Sepatu Yang Cocok Dengan Vibes Kamu", author: "Admin", status: "publish" as const, published: true },
+  { id: 2, cover: "/api/placeholder/50/50", title: "Cara Memilih Sepatu Yang Cocok Dengan Vibes Kamu", author: "Admin", status: "draft" as const, published: false },
+  { id: 3, cover: "/api/placeholder/50/50", title: "Cara Memilih Sepatu Yang Cocok Dengan Vibes Kamu", author: "Admin", status: "draft" as const, published: false },
+];
+
+export default function ArticlesPage() {
+  const [articles, setArticles] = useState(sampleArticles);
+  const [activeFilter, setActiveFilter] = useState<"All" | "Publish" | "Draft">("All");
+  const [query, setQuery] = useState("");
+  const [currentPage, setCurrentPage] = useState(1);
+  const [itemsPerPage, setItemsPerPage] = useState(3);
+
+  const handleTogglePublish = (id: number) => {
+    setArticles(prev =>
+      prev.map(a =>
+        a.id === id
+          ? { ...a, published: !a.published, status: !a.published ? "publish" : "draft" }
+          : a
+      )
+    );
+  };
+
+  const handleEdit = (id: number) => {
+    window.location.href = `/articles/edit/${id}`;
+  };
+  const handleDelete = (id: number) => console.log("Delete article:", id);
+  const handleNewArticle = () => {
+    window.location.href = '/articles/add';
+  };
+
+  // filter + search
+  const filteredArticles = useMemo(() => {
+    const byFilter =
+      activeFilter === "All"
+        ? articles
+        : articles.filter(a => (activeFilter === "Publish" ? a.status === "publish" : a.status === "draft"));
+    const q = query.trim().toLowerCase();
+    return q ? byFilter.filter(a => a.title.toLowerCase().includes(q) || a.author.toLowerCase().includes(q)) : byFilter;
+  }, [articles, activeFilter, query]);
+
+  const totalItems = filteredArticles.length;
+  const startIndex = (currentPage - 1) * itemsPerPage;
+  const endIndex = startIndex + itemsPerPage;
+  const currentArticles = filteredArticles.slice(startIndex, endIndex);
+
+  const handlePageChange = (p: number) => setCurrentPage(p);
+  const handlePageSizeChange = (n: number) => {
+    setItemsPerPage(n);
+    setCurrentPage(1);
+  };
+
+  // reset ke page 1 saat filter/search berubah
+  React.useEffect(() => setCurrentPage(1), [activeFilter, query]);
+
+  return (
+    <div className="min-h-full">
+      {/* Top breadcrumb bar */}
+      <div className="px-6 py-3 border-b border-gray-200 bg-white">
+        <nav className="flex items-center gap-2 text-sm text-gray-500">
+          <span>Articles</span>
+          <span className="text-gray-300">›</span>
+          <span className="text-gray-600">List</span>
+        </nav>
+      </div>
+
+      {/* Page header */}
+      <div className="px-6 py-6 bg-white border-b border-gray-200">
+        <div className="flex items-center justify-between">
+          <h1 className="text-2xl font-semibold text-gray-900">Articles</h1>
+          <NewNounButton noun="article" onClick={handleNewArticle} />
+        </div>
+
+        {/* Pills filter — centered */}
+        <div className="mt-6 flex justify-center">
+          <div className="inline-flex items-center gap-2 rounded-full bg-gray-100/60 p-1">
+            {(["All", "Publish", "Draft"] as const).map(f => (
+              <button
+                key={f}
+                onClick={() => setActiveFilter(f)}
+                className={[
+                  "rounded-full px-4 py-1.5 text-sm font-medium transition",
+                  activeFilter === f
+                    ? "bg-white text-gray-800 shadow-sm"
+                    : "text-gray-500 hover:text-gray-700"
+                ].join(" ")}
+              >
+                {f}
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* Main card */}
+      <div className="flex-1 bg-gray-50">
+        <div className="px-6 py-6">
+          <div className="rounded-xl border border-gray-200 bg-white shadow-sm">
+            {/* Card toolbar (kanan: search + 2 icon) */}
+            <div className="flex items-center justify-between gap-3 px-4 py-3 border-b border-gray-200">
+              <div className="flex items-center gap-3">
+                
+              </div>
+
+              <div className="flex items-center gap-2">
+                <div className="relative">
+                  <input
+                    value={query}
+                    onChange={e => setQuery(e.target.value)}
+                    placeholder="Search"
+                    className="w-56 rounded-lg border border-gray-300 pl-9 pr-3 py-2 text-sm placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  />
+                  <svg className="absolute left-3 top-2.5 h-4 w-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
+                  </svg>
+                </div>
+
+                {/* Bell count (dummy agar mirip) */}
+                <button className="relative inline-flex items-center justify-center rounded-md border border-gray-200 p-2 text-gray-500 hover:bg-gray-50">
+                  <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                    <path strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6 6 0 10-12 0v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1h6z"/>
+                  </svg>
+                  <span className="absolute -right-1 -top-1 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-amber-500 px-1 text-[10px] font-semibold text-white">0</span>
+                </button>
+
+                {/* Filter icon */}
+                <button className="inline-flex items-center justify-center rounded-md border border-gray-200 p-2 text-gray-500 hover:bg-gray-50">
+                  <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                    <path strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" d="M3 4h18M6 12h12M10 20h4"/>
+                  </svg>
+                </button>
+              </div>
+            </div>
+
+            {/* Table */}
+            <div className="overflow-x-auto">
+              <table className="min-w-full divide-y divide-gray-200">
+                <thead className="bg-gray-50">
+                  <tr>
+                    <th className="w-12 px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      <input type="checkbox" className="rounded border-gray-300" />
+                    </th>
+                    <th className="px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Cover</th>
+                    <th className="px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      <div className="flex items-center gap-1">
+                        <span>Title</span>
+                        <svg className="h-4 w-4 text-gray-400" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                          <path strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" d="M8 9l4-4 4 4M8 15l4 4 4-4"/>
+                        </svg>
+                      </div>
+                    </th>
+                    <th className="hidden sm:table-cell px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      <div className="flex items-center gap-1">
+                        <span>Author</span>
+                        <svg className="h-4 w-4 text-gray-400" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                          <path strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" d="M8 9l4-4 4 4M8 15l4 4 4-4"/>
+                        </svg>
+                      </div>
+                    </th>
+                    <th className="px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
+                    <th className="px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      <div className="flex items-center gap-1">
+                        <span>Published</span>
+                        <svg className="h-4 w-4 text-gray-400" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                          <path strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" d="M8 9l4-4 4 4M8 15l4 4 4-4"/>
+                        </svg>
+                      </div>
+                    </th>
+                    <th className="px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
+                  </tr>
+                </thead>
+
+                <tbody className="bg-white divide-y divide-gray-200">
+                  {currentArticles.map(article => (
+                    <tr key={article.id} className="hover:bg-gray-50">
+                      <td className="px-3 sm:px-6 py-4">
+                        <input type="checkbox" className="rounded border-gray-300" />
+                      </td>
+                      <td className="px-3 sm:px-6 py-4">
+                        <div className="h-10 w-10 sm:h-12 sm:w-12 overflow-hidden rounded bg-gray-200">
+                          <img
+                            src={article.cover}
+                            alt="cover"
+                            className="h-full w-full object-cover"
+                            onError={e => {
+                              e.currentTarget.src =
+                                "data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNDgiIGhlaWdodD0iNDgiIHZpZXdCb3g9IjAgMCA0OCA0OCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iNDgiIGhlaWdodD0iNDgiIGZpbGw9IiNGM0Y0RjYiLz48cGF0aCBkPSJNMjQgMzZDMzAuNjI3NCAzNiAzNiAzMC42Mjc0IDM2IDI0QzM2IDE3LjM3MjYgMzAuNjI3NCAxMiAyNCAxMkMxNy4zNzI2IDEyIDEyIDE3LjM3MjYgMTIgMjRDMTIgMzAuNjI3NiAxNy4zNzI2IDM2IDI0IDM2WiIgc3Ryb2tlPSIjOUNBM0FGIiBzdHJva2Utd2lkdGg9IjIiLz48cGF0aCBkPSJNMjQgMjhDMjYuMjA5MSAyOCAyOCAyNi4yMDkxIDI4IDI0QzI4IDIxLjc5MDkgMjYuMjA5MSAyMCAyNCAyMEMyMS43OTA5IDIwIDIwIDIxLjc5MDkgMjAgMjRDMjAgMjYuMjA5MSAyMS43OTA5IDI4IDI0IDI4WiIgc3Ryb2tlPSIjOUNBM0FGIiBzdHJva2Utd2lkdGg9IjIiLz48L3N2Zz4=";
+                            }}
+                          />
+                        </div>
+                      </td>
+                      <td className="px-3 sm:px-6 py-4">
+                        <div className="max-w-xs truncate text-sm font-medium text-gray-900">
+                          {article.title}
+                        </div>
+                      </td>
+                      <td className="hidden sm:table-cell px-3 sm:px-6 py-4">
+                        <div className="text-sm text-gray-900">{article.author}</div>
+                      </td>
+                      <td className="px-3 sm:px-6 py-4">
+                        <StatusBadge status={article.status} />
+                      </td>
+                      <td className="px-3 sm:px-6 py-4">
+                        <ToggleSwitch checked={article.published} onChange={() => handleTogglePublish(article.id)} />
+                      </td>
+                      <td className="px-3 sm:px-6 py-4">
+                        <div className="flex items-center gap-3 sm:gap-4">
+                          <EditButton onClick={() => handleEdit(article.id)} />
+                          <DeleteButton onClick={() => handleDelete(article.id)} />
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Footer pagination (di dalam card) */}
+            <div className="border-t border-gray-200 px-4 py-3">
+              <Pagination
+                totalItems={totalItems}
+                page={currentPage}
+                pageSize={itemsPerPage}
+                onPageChange={handlePageChange}
+                onPageSizeChange={handlePageSizeChange}
+                pageSizeOptions={[3, 10, 25, 50]}
+              />
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
