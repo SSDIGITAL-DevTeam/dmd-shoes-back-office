@@ -39,7 +39,7 @@ export default function CreateProductPage() {
     });
 
     const [categories] = useState([
-        { id: 6, name: "test" },
+        { id: 1, name: "Sepatu" },
         { id: 2, name: "Sandal" },
         { id: 3, name: "Boots" },
     ]);
@@ -158,8 +158,10 @@ export default function CreateProductPage() {
                     return { name: variantName, options };
                 })
                 .filter(Boolean) as { name: string; options: string[] }[];
-                const seoTags = formData.tags
-                .split(/[,\n]/)
+
+            const seoTags = formData.tags
+                .split(/[,
+]/)
                 .map((tag) => tag.trim())
                 .filter(Boolean);
 
