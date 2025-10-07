@@ -258,7 +258,7 @@ export default function ProductsPage() {
   const handleNewProduct = () => router.push("/products/create");
   const handleEdit = (id: number) => {
     console.log("Edit product", id);
-    router.push("/products/edit");
+    router.push("/products/edit/"+id);
   };
   const handleDelete = (id: number) => {
     console.log("Delete product", id);

@@ -1,12 +1,11 @@
 "use client";
 
-import React, { useEffect, useMemo, useState, useCallback } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import api from "@/lib/fetching";
 import { CreateButton, CancelButton } from "@/components/ui/ActionButton";
 import ToggleSwitch from "@/components/ui/ToggleSwitch";
 import { DeleteButton as DeleteIcon } from "@/components/ui/DeleteIcon";
-import AsyncSelect from "react-select/async";
 
 interface Gallery {
     id: number;
@@ -14,7 +13,6 @@ interface Gallery {
     title: string;
     alt: string;
     fileName: string;
-    uploading?: boolean;
 }
 
 interface Variant {
@@ -33,7 +31,6 @@ export default function CreateProductPage() {
         slug: "",
         description: "",
         category: "",
-        category_id: null as number | null,
         price: "",
         tags: "",
         keyword: "",
@@ -41,6 +38,11 @@ export default function CreateProductPage() {
         featured: false,
     });
 
+    const [categories] = useState([
+        { id: 6, name: "test" },
+        { id: 2, name: "Sandal" },
+        { id: 3, name: "Boots" },
+    ]);
 
     const [galleries, setGalleries] = useState<Gallery[]>([]);
     const [variants, setVariants] = useState<Variant[]>([]);
@@ -105,13 +107,13 @@ export default function CreateProductPage() {
         const name = formData.name.trim();
         const slug = formData.slug.trim();
         const description = formData.description.trim();
-        const categoryId = formData.category_id;
+        const categoryEntry = categories.find((c) => c.name === formData.category);
 
         const errors: string[] = [];
         if (!name) errors.push("Nama produk wajib diisi.");
         if (!slug) errors.push("Slug wajib diisi.");
         if (!description) errors.push("Deskripsi wajib diisi.");
-        if (!categoryId) errors.push("Kategori wajib dipilih.");
+        if (!categoryEntry) errors.push("Kategori wajib dipilih.");
 
         const pricingMode = pricingType === "single" ? "single" : "per_variant";
         const rootPriceValue =
@@ -222,7 +224,7 @@ export default function CreateProductPage() {
 
             const payload: Record<string, any> = {
                 status: formData.featured,
-                category_id: categoryId,
+                category_id: categoryEntry?.id,
                 pricing_mode: pricingMode,
                 name: {
                     id: name,
@@ -296,61 +298,13 @@ export default function CreateProductPage() {
     const handleAddGallery = () => {
         const newGallery = {
             id: galleries.length + 1,
-            image: "",
+            image: "/api/placeholder/150/150",
             title: "",
             alt: "",
             fileName: "file_name.jpg",
         };
         setGalleries((prev) => [...prev, newGallery]);
     };
-
-    const handleImageUpload = useCallback(async (e: React.ChangeEvent<HTMLInputElement>, id: number) => {
-        const file = e.target.files?.[0];
-        if (!file) return;
-
-        const allowed = ["image/jpeg", "image/png", "image/webp"];
-        if (!allowed.includes(file.type)) {
-            setErrorMessage("Tipe file tidak didukung. Gunakan JPG/PNG/WEBP.");
-            return;
-        }
-
-        if (file.size > 2 * 1024 * 1024) {
-            setErrorMessage("Ukuran file maksimal 2MB");
-            return;
-        }
-
-        setGalleries((prev) => prev.map((g) => (g.id === id ? { ...g, uploading: true } : g)));
-
-        const formDataUp = new FormData();
-        formDataUp.append("file", file);
-
-        try {
-            const res = await api.post<{ status: string; data: { url: string } }>("/api/v1/uploads", formDataUp);
-            const imageUrl = (res as any)?.data?.data?.url || "";
-            setGalleries((prev) =>
-                prev.map((g) => (g.id === id ? { ...g, image: imageUrl, fileName: file.name, uploading: false } : g))
-            );
-        } catch (err) {
-            setErrorMessage("Gagal mengunggah gambar");
-            setGalleries((prev) => prev.map((g) => (g.id === id ? { ...g, uploading: false } : g)));
-        }
-    }, []);
-
-    const loadCategoryOptions = useCallback(async (inputValue: string) => {
-        try {
-            const res = await api.get<{ status: string; data: any[] }>(`/categories`, {
-                params: { status: "active", per_page: 100, search: inputValue },
-            });
-            const list = (res as any)?.data?.data || [];
-            return list.map((cat: any) => ({
-                value: cat.id,
-                label: (cat.name && (cat.name.id || cat.name.en)) || cat.slug || `Category ${cat.id}`,
-                image: cat.cover_url,
-            }));
-        } catch {
-            return [];
-        }
-    }, []);
 
     const handleAddVariant = () => {
         if (variants.length >= 3) return;
@@ -519,7 +473,17 @@ export default function CreateProductPage() {
                                     <label htmlFor="description" className="block text-sm font-medium text-gray-700 mb-2">
                                         Description <span className="text-red-500">*</span>
                                     </label>
-                                  
+                                    <div className="border border-gray-300 rounded-t-lg bg-gray-50 px-3 py-2 flex items-center gap-2">
+                                        <button type="button" onClick={() => formatDescription("bold")} className="p-1.5 hover:bg-gray-200 rounded font-bold text-sm">
+                                            B
+                                        </button>
+                                        <button type="button" onClick={() => formatDescription("italic")} className="p-1.5 hover:bg-gray-200 rounded italic text-sm">
+                                            I
+                                        </button>
+                                        <button type="button" onClick={() => formatDescription("underline")} className="p-1.5 hover:bg-gray-200 rounded underline text-sm">
+                                            U
+                                        </button>
+                                    </div>
                                     <textarea
                                         id="description"
                                         name="description"
@@ -536,46 +500,20 @@ export default function CreateProductPage() {
                                     <label htmlFor="category" className="block text-sm font-medium text-gray-700 mb-2">
                                         Category <span className="text-red-500">*</span>
                                     </label>
-                                    <AsyncSelect
-                                        cacheOptions
-                                        defaultOptions
-                                        isClearable
-                                        loadOptions={loadCategoryOptions}
-                                        placeholder="Search and select category..."
-                                        onChange={(selected: any) =>
-                                            setFormData((prev) => ({
-                                                ...prev,
-                                                category: selected?.label || "",
-                                                category_id: selected?.value ?? null,
-                                            }))
-                                        }
-                                        formatOptionLabel={(option: any) => (
-                                            <div className="flex items-center gap-2">
-                                                {option.image && (
-                                                    // eslint-disable-next-line @next/next/no-img-element
-                                                    <img
-                                                        src={option.image}
-                                                        alt={option.label}
-                                                        className="w-6 h-6 rounded object-cover"
-                                                    />
-                                                )}
-                                                <span>{option.label}</span>
-                                            </div>
-                                        )}
-                                        styles={{
-                                            control: (base: any) => ({
-                                                ...base,
-                                                borderRadius: "0.5rem",
-                                                borderColor: "#d1d5db",
-                                                padding: "2px",
-                                            }),
-                                        }}
-                                        value={
-                                            formData.category_id
-                                                ? { value: formData.category_id, label: formData.category }
-                                                : null
-                                        }
-                                    />
+                                    <select
+                                        id="category"
+                                        name="category"
+                                        value={formData.category}
+                                        onChange={handleInputChange}
+                                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm bg-white text-black"
+                                    >
+                                        <option value="">Select Category</option>
+                                        {categories.map((c) => (
+                                            <option key={c.id} value={c.name}>
+                                                {c.name}
+                                            </option>
+                                        ))}
+                                    </select>
                                 </div>
 
                                 {/* Base Price (opsional / tidak dipakai untuk varian) */}
@@ -613,7 +551,7 @@ export default function CreateProductPage() {
                                     {galleries.map((gallery) => (
                                         <div key={gallery.id} className="space-y-3">
                                             <div className="relative group">
-                                                <div className="aspect-square border-2 border-gray-300 rounded-lg overflow-hidden bg-gray-50 flex items-center justify-center">
+                                                <div className="aspect-square border-2 border-gray-800 rounded-lg overflow-hidden bg-gray-100 p-2">
                                                     <img
                                                         src={gallery.image}
                                                         alt={gallery.alt}
@@ -635,15 +573,6 @@ export default function CreateProductPage() {
                                                                 />
                                                             </svg>
                                                             <span>{gallery.fileName}</span>
-                                                            <label className="ml-2 cursor-pointer bg-white/20 hover:bg-white/30 text-white px-2 py-0.5 rounded">
-                                                                <input
-                                                                    type="file"
-                                                                    accept="image/png, image/jpeg, image/webp"
-                                                                    className="hidden"
-                                                                    onChange={(e) => handleImageUpload(e, gallery.id)}
-                                                                />
-                                                                Upload
-                                                            </label>
                                                         </div>
                                                         <div className="text-gray-300 text-xs">316 KB</div>
                                                     </div>
