@@ -1,6 +1,6 @@
 // components/NewNounButton.tsx
 import React from "react";
-import clsx from "clsx";
+import { cn } from "@/lib/cn";
 
 type Props = {
   noun?: string;                // kata setelah "New", default: "article"
@@ -20,7 +20,7 @@ export const NewNounButton: React.FC<Props> = ({
       type="button"
       onClick={onClick}
       disabled={disabled}
-      className={clsx(
+      className={cn(
         // shape & spacing
         "inline-flex items-center rounded-full px-4 py-2 text-sm font-semibold",
         // colors (base: #003663)

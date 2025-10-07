@@ -19,13 +19,13 @@ export default function LoginPage() {
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [remember, setRemember] = useState(false);
+  // Remember me default: always on (persistent cookie)
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    const token = getCookieUtil("token") || (typeof window !== 'undefined' ? localStorage.getItem('token') : null);
+    const token = getCookieUtil("access_token");
     if (token) router.replace("/dashboard");
   }, [router]);
 
@@ -45,9 +45,8 @@ export default function LoginPage() {
         throw new Error(data?.message || "Login failed");
       }
 
-      // Save token to cookie + localStorage fallback
-      setCookieUtil("token", data.token, { maxAgeSeconds: remember ? 60 * 60 * 24 * 7 : undefined, sameSite: 'Lax', path: '/' });
-      try { localStorage.setItem('token', data.token); } catch {}
+      // Save token to cookie persistently (default Remember Me)
+      setCookieUtil("access_token", data.token, { maxAgeSeconds: 60 * 60 * 24 * 30, sameSite: 'Lax', path: '/' });
 
       router.replace("/dashboard");
     } catch (err: any) {
@@ -120,19 +119,7 @@ export default function LoginPage() {
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
-            <input
-              type="checkbox"
-              id="remember"
-              className="h-4 w-4 rounded border-gray-300"
-              checked={remember}
-              onChange={(e) => setRemember(e.target.checked)}
-              style={{ accentColor: "#003663" }}
-            />
-            <label htmlFor="remember" className="text-sm text-gray-700">
-              Remember me
-            </label>
-          </div>
+          {/* Remember me is enabled by default via persistent cookie */}
 
           <button
             type="submit"

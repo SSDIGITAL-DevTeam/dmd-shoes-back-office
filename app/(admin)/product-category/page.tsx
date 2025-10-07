@@ -1,56 +1,78 @@
 "use client";
 
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { NewNounButton } from "@/components/ui/AddButton";
 import { EditButton } from "@/components/ui/EditIcon";
 import { DeleteButton } from "@/components/ui/DeleteIcon";
 import { Pagination } from "@/components/layout/Pagination";
-
-// Sample category data (icon sepatu diganti placeholder)
-const sampleCategories = [
-  { id: 1, cover: "/api/placeholder/50/50", name: "Outsole Potong", parentCategory: "Outsole" },
-  { id: 2, cover: "/api/placeholder/50/50", name: "Insole", parentCategory: "Insole Sepatu" },
-  { id: 3, cover: "/api/placeholder/50/50", name: "Insole Sepatu", parentCategory: "" },
-  { id: 4, cover: "/api/placeholder/50/50", name: "Outsole", parentCategory: "" },
-];
+import api from "@/lib/fetching";
+import { useRouter } from "next/navigation";
 
 type ParentFilter = "all" | "has-parent" | "no-parent";
 type SortDir = "asc" | "desc";
 
+type ApiCategory = {
+  id: number;
+  parent_id: number | null;
+  name?: { id?: string; en?: string };
+  name_text?: string;
+  slug?: string;
+  status?: boolean;
+  cover?: string | null;
+  cover_url?: string | null;
+};
+
 export default function ProductCategoryPage() {
-  const [categories] = useState(sampleCategories);
+  const router = useRouter();
+  const [categories, setCategories] = useState<ApiCategory[]>([]);
   const [query, setQuery] = useState("");
   const [parentFilter, setParentFilter] = useState<ParentFilter>("all");
   const [sortDir, setSortDir] = useState<SortDir>("asc");
   const [filterOpen, setFilterOpen] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   // pagination state
   const [currentPage, setCurrentPage] = useState(1);
-  const [itemsPerPage, setItemsPerPage] = useState(3);
+  const [itemsPerPage, setItemsPerPage] = useState(10);
+
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      setLoading(true);
+      setError(null);
+      try {
+        const res = await api.get("/categories", { params: { per_page: 100 } });
+        const data = res.data?.data ?? [];
+        if (mounted) setCategories(Array.isArray(data) ? data : []);
+      } catch (e: any) {
+        setError(e?.response?.data?.message || e?.message || "Failed to fetch categories");
+      } finally {
+        setLoading(false);
+      }
+    })();
+    return () => {
+      mounted = false;
+    };
+  }, []);
 
   // ====== data processing: search + filter + sort ======
   const processed = useMemo(() => {
     let data = [...categories];
-
-    // search by name or parent
     const q = query.trim().toLowerCase();
     if (q) {
-      data = data.filter((c) =>
-        [c.name, c.parentCategory || ""].some((v) => v.toLowerCase().includes(q))
-      );
+      data = data.filter((c) => {
+        const n = c.name_text || c.name?.id || c.name?.en || "";
+        return [n, c.slug || ""].some((v) => v.toLowerCase().includes(q));
+      });
     }
-
-    // parent filter
-    if (parentFilter === "has-parent") data = data.filter((c) => !!c.parentCategory);
-    if (parentFilter === "no-parent") data = data.filter((c) => !c.parentCategory);
-
-    // sort by name
-    data.sort((a, b) =>
-      sortDir === "asc"
-        ? a.name.localeCompare(b.name)
-        : b.name.localeCompare(a.name)
-    );
-
+    if (parentFilter === "has-parent") data = data.filter((c) => !!c.parent_id);
+    if (parentFilter === "no-parent") data = data.filter((c) => !c.parent_id);
+    data.sort((a, b) => {
+      const aName = (a.name_text || a.name?.id || a.name?.en || "").toLowerCase();
+      const bName = (b.name_text || b.name?.id || b.name?.en || "").toLowerCase();
+      return sortDir === "asc" ? aName.localeCompare(bName) : bName.localeCompare(aName);
+    });
     return data;
   }, [categories, query, parentFilter, sortDir]);
 
@@ -65,16 +87,27 @@ export default function ProductCategoryPage() {
     setCurrentPage(1);
   };
 
-  // reset ke page 1 saat search/filter berubah
   React.useEffect(() => setCurrentPage(1), [query, parentFilter, sortDir]);
 
-  const handleNewCategory = () => {
-    window.location.href = '/product-category/create';
+  const handleNewCategory = () => router.push('/product-category/create');
+  const handleEdit = (id: number) => router.push(`/product-category/edit/${id}`);
+  const handleDelete = async (id: number) => {
+    if (!confirm('Are you sure you want to delete this category?')) return;
+    try {
+      await api.delete(`/categories/${id}`);
+      setCategories((prev) => prev.filter((c) => c.id !== id));
+    } catch (e: any) {
+      alert(e?.response?.data?.message || e?.message || 'Failed to delete');
+    }
   };
-  const handleEdit = (id: number) => {
-    window.location.href = '/product-category/edit';
+
+  const PLACEHOLDER = "/api/placeholder/50/50";
+  const STORAGE_BASE = (process.env.NEXT_PUBLIC_STORAGE_URL || '').replace(/\/$/, '');
+  const toImageUrl = (v?: string | null) => {
+    if (!v) return PLACEHOLDER;
+    if (/^https?:\/\//i.test(v)) return v;
+    return STORAGE_BASE ? `${STORAGE_BASE}/${String(v).replace(/^\/+/, '')}` : PLACEHOLDER;
   };
-  const handleDelete = (id: number) => console.log("Delete category:", id);
 
   return (
     <div className="min-h-full">
@@ -202,6 +235,12 @@ export default function ProductCategoryPage() {
 
             {/* Table */}
             <div className="overflow-x-auto">
+              {error && (
+                <div className="m-4 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>
+              )}
+              {loading ? (
+                <div className="p-6 text-sm text-gray-600">Loading...</div>
+              ) : (
               <table className="min-w-full divide-y divide-gray-200">
                 <thead className="bg-gray-50">
                   <tr>
@@ -242,7 +281,7 @@ export default function ProductCategoryPage() {
                       <td className="whitespace-nowrap px-3 py-4 sm:px-6">
                         <div className="h-12 w-12 overflow-hidden rounded bg-gray-200">
                           <img
-                            src={category.cover}
+                            src={category.cover_url || category.cover || "/api/placeholder/50/50"}
                             alt="Category cover"
                             className="h-full w-full object-cover"
                             onError={(e) => {
@@ -253,10 +292,10 @@ export default function ProductCategoryPage() {
                         </div>
                       </td>
                       <td className="px-3 py-4 sm:px-6">
-                        <div className="max-w-xs truncate text-sm font-medium text-gray-900">{category.name}</div>
+                        <div className="max-w-xs truncate text-sm font-medium text-gray-900">{category.name_text || category.name?.id || category.name?.en || '-'}</div>
                       </td>
                       <td className="hidden whitespace-nowrap px-3 py-4 text-sm text-gray-900 sm:table-cell sm:px-6">
-                        {category.parentCategory || "-"}
+                        {category.parent_id ?? "-"}
                       </td>
                       <td className="whitespace-nowrap px-3 py-4 sm:px-6">
                         <div className="flex items-center gap-3 sm:gap-4">
@@ -268,6 +307,7 @@ export default function ProductCategoryPage() {
                   ))}
                 </tbody>
               </table>
+              )}
             </div>
             <hr />
 
@@ -279,7 +319,7 @@ export default function ProductCategoryPage() {
                 pageSize={itemsPerPage}
                 onPageChange={handlePageChange}
                 onPageSizeChange={handlePageSizeChange}
-                pageSizeOptions={[3, 10, 25, 50]}
+                pageSizeOptions={[10, 25, 50, 100]}
               />
             </div>
           </div>
@@ -288,3 +328,7 @@ export default function ProductCategoryPage() {
     </div>
   );
 }
+
+
+
+

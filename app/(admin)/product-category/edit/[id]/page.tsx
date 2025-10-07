@@ -1,14 +1,29 @@
 "use client";
 
 import React, { useEffect, useState } from "react";
-import { CreateButton, CancelButton } from "@/components/ui/ActionButton";
+import { DraftButton, CancelButton, DeleteButton } from "@/components/ui/ActionButton";
 import api from "@/lib/fetching";
-import { useRouter } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 
-type ParentOption = { id: number; name?: { id?: string; en?: string } | string };
+type ApiCategory = {
+  id: number;
+  parent_id: number | null;
+  name?: { id?: string; en?: string };
+  name_text?: string;
+  slug?: string;
+  status?: boolean;
+  cover?: string | null;
+  cover_url?: string | null;
+};
 
-export default function CreateCategoryPage() {
+export default function EditCategoryPage() {
   const router = useRouter();
+  const params = useParams<{ id: string }>();
+  const id = Number(params?.id);
+
+  const [parentCategories, setParentCategories] = useState<ApiCategory[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [formData, setFormData] = useState({
     name_id: "",
     name_en: "",
@@ -19,30 +34,49 @@ export default function CreateCategoryPage() {
   });
   const [coverFile, setCoverFile] = useState<File | null>(null);
 
-  const [parentCategories, setParentCategories] = useState<ParentOption[]>([]);
-  const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [success, setSuccess] = useState<string | null>(null);
-
   useEffect(() => {
+    let mounted = true;
     (async () => {
       try {
-        const res = await api.get('/categories', { params: { status: 'active', per_page: 100 } });
-        setParentCategories(Array.isArray(res.data?.data) ? res.data.data : []);
-      } catch {}
+        const [listRes, allRes] = await Promise.all([
+          api.get('/categories', { params: { per_page: 100 } }),
+          api.get('/categories', { params: { status: 'active', per_page: 100 } }),
+        ]);
+        const all = Array.isArray(listRes.data?.data) ? listRes.data.data as ApiCategory[] : [];
+        const parents = Array.isArray(allRes.data?.data) ? allRes.data.data as ApiCategory[] : [];
+        if (!mounted) return;
+        setParentCategories(parents);
+
+        const found = all.find((c) => c.id === id);
+        if (found) {
+          setFormData({
+            name_id: found.name?.id || found.name_text || "",
+            name_en: found.name?.en || "",
+            slug: found.slug || "",
+            parent_id: found.parent_id ? String(found.parent_id) : "",
+            status: !!found.status,
+            cover_url: found.cover_url || found.cover || "",
+          });
+        } else {
+          setError('Category not found');
+        }
+      } catch (e: any) {
+        setError(e?.response?.data?.message || e?.message || 'Failed to load category');
+      } finally {
+        setLoading(false);
+      }
     })();
-  }, []);
+    return () => { mounted = false; };
+  }, [id]);
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
     const { name, value, type, checked } = e.target as HTMLInputElement;
     setFormData(prev => ({ ...prev, [name]: type === 'checkbox' ? checked : value }));
   };
 
-    const handleCreate = async (andContinue = false) => {
-      setSubmitting(true);
-      setError(null);
-      setSuccess(null);
-      try {
+  const handleSaveChanges = async () => {
+    setError(null);
+    try {
       const fd = new FormData();
       fd.append('name[id]', formData.name_id);
       fd.append('name[en]', formData.name_en);
@@ -50,23 +84,28 @@ export default function CreateCategoryPage() {
       if (formData.parent_id) fd.append('parent_id', String(Number(formData.parent_id)));
       fd.append('status', formData.status ? '1' : '0');
       if (coverFile) fd.append('cover', coverFile);
-
-      const res = await api.post('/categories', fd as any);
-      setSuccess(res.data?.message || 'Category created');
-      if (andContinue) {
-        setFormData({ name_id: "", name_en: "", slug: "", parent_id: "", status: true, cover_url: "" });
-        setCoverFile(null);
-      } else {
-        router.replace('/product-category');
-      }
-      } catch (e: any) {
-        setError(e?.response?.data?.message || e?.message || 'Failed to create category');
-      } finally {
-        setSubmitting(false);
-      }
-    };
+      await api.patch(`/categories/${id}`, fd as any);
+      router.replace('/product-category');
+    } catch (e: any) {
+      setError(e?.response?.data?.message || e?.message || 'Failed to update category');
+    }
+  };
 
   const handleCancel = () => router.push('/product-category');
+
+  const handleDelete = async () => {
+    if (!confirm('Are you sure you want to delete this category?')) return;
+    try {
+      await api.delete(`/categories/${id}`);
+      router.replace('/product-category');
+    } catch (e: any) {
+      alert(e?.response?.data?.message || e?.message || 'Failed to delete');
+    }
+  };
+
+  if (loading) {
+    return <div className="p-6 text-gray-600">Loading...</div>;
+  }
 
   return (
     <div className="min-h-full">
@@ -74,12 +113,15 @@ export default function CreateCategoryPage() {
         <nav className="flex items-center gap-2 text-sm text-gray-500">
           <span>Categories</span>
           <span className="text-gray-300">›</span>
-          <span className="text-gray-600">Create</span>
+          <span className="text-gray-600">Edit</span>
         </nav>
       </div>
 
       <div className="bg-white border-b border-gray-200 px-6 py-6">
-        <h1 className="text-2xl font-semibold text-gray-900">New Category</h1>
+        <div className="flex items-center justify-between">
+          <h1 className="text-2xl font-semibold text-gray-900">Edit Category</h1>
+          <DeleteButton onClick={handleDelete} />
+        </div>
       </div>
 
       <div className="bg-gray-50 min-h-screen">
@@ -88,6 +130,8 @@ export default function CreateCategoryPage() {
             <div className="lg:col-span-2">
               <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
                 <h2 className="text-lg font-semibold text-gray-900 mb-6">Category</h2>
+
+                {error && <div className="mb-4 rounded border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>}
 
                 <div className="mb-6">
                   <div className="mb-2 text-sm font-medium text-gray-700">Name (Bahasa Indonesia) <span className="text-red-500">*</span></div>
@@ -101,7 +145,6 @@ export default function CreateCategoryPage() {
                     placeholder="Sandal Jepit"
                   />
                 </div>
-
                 <div className="mb-6">
                   <div className="mb-2 text-sm font-medium text-gray-700">Name (English)</div>
                   <input
@@ -188,10 +231,7 @@ export default function CreateCategoryPage() {
           </div>
 
           <div className="mt-8 flex items-center gap-4">
-            {error && <div className="text-sm text-red-600">{error}</div>}
-            {success && <div className="text-sm text-green-600">{success}</div>}
-            <CreateButton onClick={() => handleCreate(false)} />
-            <CancelButton onClick={() => handleCreate(true)}>Create & create another</CancelButton>
+            <DraftButton onClick={handleSaveChanges}>Save Changes</DraftButton>
             <CancelButton onClick={handleCancel} />
           </div>
         </div>

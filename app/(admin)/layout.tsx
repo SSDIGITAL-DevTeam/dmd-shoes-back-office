@@ -22,8 +22,8 @@ export default function DashboardLayout({
 
   useEffect(() => {
     let cancelled = false;
-    const token = getCookieUtil('token') || (typeof window !== 'undefined' ? localStorage.getItem('token') : null);
-    //console.log('==token', token);
+    const token = getCookieUtil('access_token');
+    console.log('==token', token);
     if (!token) {
       router.replace('/auth/login');
       return;
@@ -43,13 +43,12 @@ export default function DashboardLayout({
         }
       } catch (e: any) {
         // clear cookie and redirect to login
-        deleteCookieUtil('token');
-        try { localStorage.removeItem('token'); } catch {}
-        clearAuth();
-        if (!cancelled) {
-          setError(e?.message || 'Unauthorized');
-          router.replace('/auth/login');
-        }
+        // deleteCookieUtil('access_token');
+        // clearAuth();
+        // if (!cancelled) {
+        //   setError(e?.message || 'Unauthorized');
+        //   router.replace('/auth/login');
+        // }
       }
     })();
     return () => {
@@ -62,7 +61,7 @@ export default function DashboardLayout({
 
   const onLogout = async () => {
     try {
-      const t = token || (typeof window !== 'undefined' ? localStorage.getItem('token') : null);
+      const t = token || getCookieUtil('access_token');
       if (t) {
         await fetch(`${API_BASE}/logout`, {
           method: 'POST',
@@ -70,8 +69,7 @@ export default function DashboardLayout({
         }).catch(() => {});
       }
     } finally {
-      deleteCookieUtil('token');
-      try { localStorage.removeItem('token'); } catch {}
+      deleteCookieUtil('access_token');
       clearAuth();
       router.replace('/auth/login');
     }
