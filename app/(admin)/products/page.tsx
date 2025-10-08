@@ -260,10 +260,23 @@ export default function ProductsPage() {
     console.log("Edit product", id);
     router.push("/products/edit/"+id);
   };
-  const handleDelete = (id: number) => {
-    console.log("Delete product", id);
+  const handleDelete = async (id: number) => {
+    if (!confirm("Yakin ingin menghapus produk ini?")) return;
+  
+    try {
+      await api.delete(`/products/${id}`);
+      // Refresh daftar produk setelah delete
+      setProducts((prev) => prev.filter((p) => p.id !== id));
+      setMeta((prev) => ({ ...prev, total: prev.total - 1 }));
+    } catch (err: any) {
+      console.error("Gagal menghapus produk:", err);
+      alert(
+        err?.response?.data?.message ||
+          err?.message ||
+          "Gagal menghapus produk. Coba lagi."
+      );
+    }
   };
-
   const toggleSortDir = () =>
     setSortDir((prev) => (prev === "asc" ? "desc" : "asc"));
 

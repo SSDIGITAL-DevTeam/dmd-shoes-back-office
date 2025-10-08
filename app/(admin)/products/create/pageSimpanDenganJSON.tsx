@@ -30,9 +30,6 @@ export default function CreateProductPage() {
     const [submitting, setSubmitting] = useState(false);
     const [errorMessage, setErrorMessage] = useState<string | null>(null);
     const [successMessage, setSuccessMessage] = useState<string | null>(null);
-      // 🆕 Tambahkan state untuk bahasa
-    const [language, setLanguage] = useState<"id" | "en">("en");
-
     const [formData, setFormData] = useState({
         name: "",
         slug: "",
@@ -44,7 +41,6 @@ export default function CreateProductPage() {
         keyword: "",
         seoDescription: "",
         featured: false,
-        heel_height_cm: "",    // ← tambahkan ini
     });
 
 
@@ -103,212 +99,179 @@ export default function CreateProductPage() {
 
 
    const handleCreate = async () => {
-    setErrorMessage(null);
-    setSuccessMessage(null);
+  setErrorMessage(null);
+  setSuccessMessage(null);
 
-    // const name = formData.name.trim();
-        // const description = formData.description.trim();
-    const slug = formData.slug.trim();
+  const name = formData.name.trim();
+  const slug = formData.slug.trim();
+  const description = formData.description.trim();
+  const categoryId = formData.category_id;
 
-    const categoryId = formData.category_id;
-    const name_id = (formData as any).name_id?.trim() || "";
-    const name_en = (formData as any).name_en?.trim() || "";
-    const description_id = (formData as any).description_id?.trim() || "";
-    const description_en = (formData as any).description_en?.trim() || "";
-    const errors: string[] = [];
-    if (!name_en) errors.push("Nama produk wajib diisi.");
-    if (!slug) errors.push("Slug wajib diisi.");
-    if (!description_en) errors.push("Deskripsi wajib diisi.");
-    if (!categoryId) errors.push("Kategori wajib dipilih.");
-  
-    const pricingMode = pricingType === "single" ? "single" : "per_variant";
-    // const rootPriceValue =
-    //   pricingMode === "single"
-    //     ? parseNumber(singlePrice || formData.price)
-    //     : parseNumber(formData.price);
+  const errors: string[] = [];
+  if (!name) errors.push("Nama produk wajib diisi.");
+  if (!slug) errors.push("Slug wajib diisi.");
+  if (!description) errors.push("Deskripsi wajib diisi.");
+  if (!categoryId) errors.push("Kategori wajib dipilih.");
 
-    const rootPriceValue =parseNumber( formData.price)
-  
-    if (pricingMode === "single" && rootPriceValue == null) {
-      errors.push("Harga produk wajib diisi.");
+  const pricingMode = pricingType === "single" ? "single" : "per_variant";
+  const rootPriceValue =
+    pricingMode === "single"
+      ? parseNumber(singlePrice || formData.price)
+      : parseNumber(formData.price);
+
+  if (pricingMode === "single" && rootPriceValue == null) {
+    errors.push("Harga produk wajib diisi.");
+  }
+
+  const validVariants = getValidVariants();
+  const variantCombinations = generateVariantCombinations();
+
+  if (pricingMode === "per_variant" && validVariants.length === 0) {
+    errors.push("Tambahkan minimal satu varian untuk menggunakan harga per kombinasi.");
+  }
+
+  if (
+    pricingMode === "per_variant" &&
+    validVariants.length > 0 &&
+    variantCombinations.length === 0
+  ) {
+    errors.push("Lengkapi opsi varian sebelum menyimpan.");
+  }
+
+  if (errors.length > 0) {
+    setErrorMessage(errors[0]);
+    return;
+  }
+
+  setSubmitting(true);
+
+  try {
+    // ── 1️⃣ Siapkan FormData
+    const fd = new FormData();
+    fd.append("status", formData.featured ? "1" : "0");
+    fd.append("category_id", String(categoryId));
+    fd.append("pricing_mode", pricingMode);
+    fd.append("name[id]", name);
+    fd.append("name[en]", name);
+    fd.append("description[id]", description);
+    fd.append("description[en]", description);
+    fd.append("slug", slug);
+
+    // ── 2️⃣ SEO
+    const seoTags = formData.tags
+      .split(/[,\n]/)
+      .map((tag) => tag.trim())
+      .filter(Boolean);
+    seoTags.forEach((tag, index) => {
+      fd.append(`seo_tags[${index}]`, tag);
+    });
+
+    if (formData.keyword.trim()) {
+      fd.append("seo_keyword", formData.keyword.trim());
     }
-  
-    const validVariants = getValidVariants();
-    const variantCombinations = generateVariantCombinations();
-   
-    // if (pricingMode === "per_variant" && validVariants.length === 0) {
-    //   errors.push("Tambahkan minimal satu varian untuk menggunakan harga per kombinasi.");
-    // }
-  
-    if (
-      pricingMode === "per_variant" &&
-      validVariants.length > 0 &&
-      variantCombinations.length === 0
-    ) {
-      errors.push("Lengkapi opsi varian sebelum menyimpan.");
+    if (formData.seoDescription.trim()) {
+      fd.append("seo_description", formData.seoDescription.trim());
     }
-  
-    if (errors.length > 0) {
-      setErrorMessage(errors[0]);
-      return;
-    }
-  
-    setSubmitting(true);
-   
-    try {
-      // ── 1️⃣ Siapkan FormData
-      const fd = new FormData();
-      fd.append("status", formData.featured ? "1" : "0");
-      fd.append("category_id", String(categoryId));
-      fd.append("pricing_mode", pricingMode);
-    //   fd.append("name[id]", name);
-    //   fd.append("name[en]", name);
-    //   fd.append("description[id]", description);
-    //   fd.append("description[en]", description);
 
-        fd.append("name[id]", name_id);
-        fd.append("name[en]", name_en);
-        fd.append("description[id]", description_id);
-        fd.append("description[en]", description_en);
-      fd.append("slug", slug);
-      fd.append("heel_height_cm", formData.heel_height_cm || "0");
- 
-      // ── 2️⃣ SEO
-      const seoTags = formData.tags
-        .split(/[,\n]/)
-        .map((tag) => tag.trim())
-        .filter(Boolean);
-      seoTags.forEach((tag, index) => {
-        fd.append(`seo_tags[${index}]`, tag);
+    // ── 3️⃣ Harga Single
+    if (pricingMode === "single" && rootPriceValue != null) {
+      fd.append("price", String(rootPriceValue));
+    }
+
+    // ── 4️⃣ Attributes (varian)
+    const attributes = validVariants.map((variant, index) => ({
+      name: variant.name.trim() || `Variant ${index + 1}`,
+      options: variant.options.map((o) => o.trim()).filter(Boolean),
+    }));
+    attributes.forEach((attr, i) => {
+      fd.append(`attributes[${i}][name]`, attr.name);
+      attr.options.forEach((opt, j) => {
+        fd.append(`attributes[${i}][options][${j}]`, opt);
       });
-  
-      if (formData.keyword.trim()) {
-        fd.append("seo_keyword", formData.keyword.trim());
-      }
-      if (formData.seoDescription.trim()) {
-        fd.append("seo_description", formData.seoDescription.trim());
-      }
-    
-      // ── 3️⃣ Harga Single
-      if (pricingMode === "single" && rootPriceValue != null) {
-        fd.append("price", String(rootPriceValue));
-      }
-   
-      // ── 4️⃣ Attributes (varian)
-      const attributes = validVariants.map((variant, index) => ({
-        name: variant.name.trim() || `Variant ${index + 1}`,
-        options: variant.options.map((o) => o.trim()).filter(Boolean),
-      }));
-      attributes.forEach((attr, i) => {
-        fd.append(`attributes[${i}][name]`, attr.name);
-        attr.options.forEach((opt, j) => {
-          fd.append(`attributes[${i}][options][${j}]`, opt);
+    });
+
+    // ── 5️⃣ Harga varian
+    if (pricingMode === "per_variant" && variantCombinations.length > 0) {
+      const variantPricesPayload: {
+        labels: string[];
+        price: number;
+        stock: number;
+        active: boolean;
+      }[] = [];
+
+      if (validVariants.length === 1) {
+        variantCombinations.forEach((combination) => {
+          const label = combination[0];
+          const priceValue = parseNumber(groupPrices[label]);
+          if (priceValue != null) {
+            variantPricesPayload.push({
+              labels: combination,
+              price: priceValue,
+              stock: 0,
+              active: true,
+            });
+          }
         });
-      });
-    
-      // ── 5️⃣ Harga varian
-      if (pricingMode === "per_variant" && variantCombinations.length > 0) {
-        const variantPricesPayload: {
-          labels: string[];
-          price: number;
-          stock: number;
-          active: boolean;
-        }[] = [];
-  
-        if (validVariants.length === 1) {
-          variantCombinations.forEach((combination) => {
-            const label = combination[0];
-            const priceValue = parseNumber(groupPrices[label]);
-            if (priceValue != null) {
-              variantPricesPayload.push({
-                labels: combination,
-                price: priceValue,
-                stock: 0,
-                active: true,
-              });
-            }
-          });
-        } else {
-          variantCombinations.forEach((combination) => {
-            const key = combination.join("-");
-            const priceValue = parseNumber(individualPrices[key]);
-            if (priceValue != null) {
-              variantPricesPayload.push({
-                labels: combination,
-                price: priceValue,
-                stock: 0,
-                active: true,
-              });
-            }
-          });
-        }
-  
-        variantPricesPayload.forEach((vp, i) => {
-          vp.labels.forEach((label, j) => {
-            fd.append(`variant_prices[${i}][labels][${j}]`, label);
-          });
-          fd.append(`variant_prices[${i}][price]`, String(vp.price));
-          fd.append(`variant_prices[${i}][stock]`, String(vp.stock));
-          fd.append(`variant_prices[${i}][active]`, vp.active ? "1" : "0");
-        });
-      }
- 
-      // ── 6️⃣ Gallery (file upload)
-      galleries.forEach((g, i) => {
-        if (g.file) {
-          fd.append(`gallery[${i}][image]`, g.file);
-        }
-        if (g.title) fd.append(`gallery[${i}][title]`, g.title);
-        if (g.alt) fd.append(`gallery[${i}][alt]`, g.alt);
-        fd.append(`gallery[${i}][sort]`, String(i));
-      });
-    
-      try {
-        // ── 7️⃣ Kirim
-        // const res = await api.post("/products", fd as any, {
-        //   headers: { "Content-Type": "multipart/form-data" },
-        // });
-
-        const res = await api.post("/products", fd as any);
-      
-        // ✅ Jika sukses
-        setSuccessMessage(res.data?.message || "Produk berhasil dibuat.");
-        setErrorMessage(null);
-      
-        setTimeout(() => {
-          router.push("/products");
-        }, 800);
-      
-      } catch (err: any) {
-        console.error("Gagal membuat produk:", JSON.stringify(err));
-      
-        // Ambil pesan error dari response API (jika ada)
-        const errorMsg =
-          err.response?.data?.message ||
-          err.response?.data?.error ||
-          "Terjadi kesalahan saat membuat produk. Silakan coba lagi.";
-        console.log()
-        setErrorMessage(errorMsg);
-        setSuccessMessage(null);
-      }
-      // ── 7️⃣ Kirim
-     
-    } catch (error: any) {
-      const response = error?.response?.data;
-      if (response?.errors) {
-        const messages = Object.values(response.errors)
-          .flat()
-          .map((msg: unknown) => String(msg));
-        setErrorMessage(
-          messages.length ? messages.join(", ") : response.message || "Gagal membuat produk."
-        );
       } else {
-        setErrorMessage(response?.message || error?.message || "Gagal membuat produk.");
+        variantCombinations.forEach((combination) => {
+          const key = combination.join("-");
+          const priceValue = parseNumber(individualPrices[key]);
+          if (priceValue != null) {
+            variantPricesPayload.push({
+              labels: combination,
+              price: priceValue,
+              stock: 0,
+              active: true,
+            });
+          }
+        });
       }
-    } finally {
-      setSubmitting(false);
+
+      variantPricesPayload.forEach((vp, i) => {
+        vp.labels.forEach((label, j) => {
+          fd.append(`variant_prices[${i}][labels][${j}]`, label);
+        });
+        fd.append(`variant_prices[${i}][price]`, String(vp.price));
+        fd.append(`variant_prices[${i}][stock]`, String(vp.stock));
+        fd.append(`variant_prices[${i}][active]`, vp.active ? "1" : "0");
+      });
     }
-  };
+
+    // ── 6️⃣ Gallery (file upload)
+    galleries.forEach((g, i) => {
+      if (g.file) {
+        fd.append(`gallery[${i}][image]`, g.file);
+      }
+      if (g.title) fd.append(`gallery[${i}][title]`, g.title);
+      if (g.alt) fd.append(`gallery[${i}][alt]`, g.alt);
+      fd.append(`gallery[${i}][sort]`, String(i));
+    });
+
+    // ── 7️⃣ Kirim
+    const res = await api.post("/products", fd as any, {
+      headers: { "Content-Type": "multipart/form-data" },
+    });
+
+    setSuccessMessage(res.data?.message || "Produk berhasil dibuat.");
+    setTimeout(() => {
+      router.push("/products");
+    }, 800);
+  } catch (error: any) {
+    const response = error?.response?.data;
+    if (response?.errors) {
+      const messages = Object.values(response.errors)
+        .flat()
+        .map((msg: unknown) => String(msg));
+      setErrorMessage(
+        messages.length ? messages.join(", ") : response.message || "Gagal membuat produk."
+      );
+    } else {
+      setErrorMessage(response?.message || error?.message || "Gagal membuat produk.");
+    }
+  } finally {
+    setSubmitting(false);
+  }
+};
     const handleCancel = () => {
         router.push("/products");
     };
@@ -448,26 +411,9 @@ export default function CreateProductPage() {
             </div>
 
             {/* Header */}
-         {/* Header */}
-      <div className="bg-white border-b border-gray-200 px-6 py-6 flex items-center justify-between">
-        <h1 className="text-2xl font-semibold text-gray-900">New Product</h1>
-
-        {/* 🆕 Language selector */}
-        <div className="flex items-center gap-2">
-          <label htmlFor="language" className="text-sm font-medium text-gray-700">
-            Language:
-          </label>
-          <select
-            id="language"
-            value={language}
-            onChange={(e) => setLanguage(e.target.value as "id" | "en")}
-            className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent text-black"
-          >
-            <option value="id">🇮🇩 Indonesia</option>
-            <option value="en">🇬🇧 English</option>
-          </select>
-        </div>
-      </div>
+            <div className="bg-white border-b border-gray-200 px-6 py-6">
+                <h1 className="text-2xl font-semibold text-gray-900">New Product</h1>
+            </div>
 
             {/* Main */}
             <div className="bg-gray-50 min-h-screen">
@@ -494,28 +440,15 @@ export default function CreateProductPage() {
                                     <label htmlFor="name" className="block text-sm font-medium text-gray-700 mb-2">
                                         Name <span className="text-red-500">*</span>
                                     </label>
-                            
-
-{(["id", "en"] as const).map((langKey) => (
-    <div
-      key={langKey}
-      className={`${language !== langKey ? "hidden" : "block"}`}
-    >
-      <input
-        type="text"
-        name={`name_${langKey}`}
-        value={(formData as any)[`name_${langKey}`] || ""}
-        onChange={(e) =>
-          setFormData((prev) => ({
-            ...prev,
-            [`name_${langKey}`]: e.target.value,
-          }))
-        }
-        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm text-black"
-        placeholder={langKey === "id" ? "Nama produk (Indonesia)" : "Product name (English)"}
-      />
-    </div>
-  ))}
+                                    <input
+                                        type="text"
+                                        id="name"
+                                        name="name"
+                                        value={formData.name}
+                                        onChange={handleInputChange}
+                                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm text-black"
+                                        placeholder=""
+                                    />
                                 </div>
 
                                 {/* Slug */}
@@ -547,27 +480,16 @@ export default function CreateProductPage() {
                                     <label htmlFor="description" className="block text-sm font-medium text-gray-700 mb-2">
                                         Description <span className="text-red-500">*</span>
                                     </label>
-                                    {(["id", "en"] as const).map((langKey) => (
-                                        <div
-                                        key={langKey}
-                                        className={`${language !== langKey ? "hidden" : "block"}`}
-                                        >
-                                        <textarea
-                                            name={`description_${langKey}`}
-                                            value={(formData as any)[`description_${langKey}`] || ""}
-                                            onChange={(e) =>
-                                            setFormData((prev) => ({
-                                                ...prev,
-                                                [`description_${langKey}`]: e.target.value,
-                                            }))
-                                            }
-                                            rows={8}
-                                            className="w-full px-3 py-2 border border-gray-300 border-t-0 rounded-b-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm text-black resize-none"
-                                            placeholder={langKey === "id" ? "Deskripsi produk (Indonesia)" : "Product description (English)"}
-                                        />
-                                        </div>
-                                    ))}
-                            
+                                  
+                                    <textarea
+                                        id="description"
+                                        name="description"
+                                        value={formData.description}
+                                        onChange={handleInputChange}
+                                        rows={8}
+                                        className="w-full px-3 py-2 border border-gray-300 border-t-0 rounded-b-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm text-black resize-none"
+                                        placeholder="Product description"
+                                    />
                                 </div>
 
                                 {/* Category */}
@@ -633,23 +555,6 @@ export default function CreateProductPage() {
                                         min={0}
                                     />
                                 </div>
-
-                                {/* Heel Height (cm) */}
-                                <div className="mb-6">
-                                    <label htmlFor="heel_height_cm" className="block text-sm font-medium text-gray-700 mb-2">
-                                        Heel Height (cm)
-                                    </label>
-                                    <input
-                                        type="number"
-                                        id="heel_height_cm"
-                                        name="heel_height_cm"
-                                        value={(formData as any).heel_height_cm ?? ""}
-                                        onChange={handleInputChange}
-                                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm text-black"
-                                        placeholder="e.g. 12"
-                                        min={0}
-                                    />
-                                </div>
                             </div>
                             <ProductGallery
                                 galleries={galleries}
@@ -659,7 +564,92 @@ export default function CreateProductPage() {
                               
                                 />
                 
-           
+                            {/* Galleries */}
+                            {/* <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+                                <div className="flex items-center justify-between mb-6">
+                                    <h2 className="text-lg font-semibold text-gray-900">Galleries</h2>
+                                    <button
+                                        type="button"
+                                        onClick={handleAddGallery}
+                                        className="px-4 py-2 text-sm font-medium text-blue-600 bg-blue-50 border border-blue-200 rounded-lg hover:bg-blue-100 transition-colors"
+                                    >
+                                        Add Gallery
+                                    </button>
+                                </div>
+
+                                <div className="grid grid-cols-3 gap-6">
+                                    {galleries.map((gallery) => (
+                                        <div key={gallery.id} className="space-y-3">
+                                            <div className="relative group">
+                                                <div className="aspect-square border-2 border-gray-300 rounded-lg overflow-hidden bg-gray-50 flex items-center justify-center">
+                                                    <img
+                                                        src={gallery.image}
+                                                        alt={gallery.alt}
+                                                        className="w-full h-full object-cover rounded"
+                                                        onError={(e) => {
+                                                            e.currentTarget.src =
+                                                                "data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNDAiIGhlaWdodD0iNDAiIHZpZXdCb3g9IjAgMCA0MCA0MCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iNDAiIGhlaWdodD0iNDAiIGZpbGw9IiNGM0Y0RjYiLz48cGF0aCBkPSJNMjAgMzBDMjYuNjI3NCAzMCAzMCAyNi42Mjc0IDMwIDIwQzMwIDEzLjM3MjYgMjYuNjI3NCAxMCAyMCAxMEMxMy4zNzI2IDEwIDEwIDEzLjM3MjYgMTAgMjBDMTAgMjYuNjI3NiAxMy4zNzI2IDMwIDIwIDMwWiIgc3Ryb2tlPSIjOUNBM0FGIiBzdHJva2Utd2lkdGg9IjIiLz48cGF0aCBkPSJNMjAgMjRDMjIuMjA5MSAyNCAyNCAyMi4yMDkxIDI0IDIwQzI0IDE3Ljc5MDkgMjIuMjA5MSAxNiAyMCAxNkMxNy43OTA5IDE2IDE2IDE3Ljc5MDkgMTYgMjBDMTYgMjIuMjA5MSAxNy43OTA5IDI0IDIwIDI0WiIgc3Ryb2tlPSIjOUNBM0FGIiBzdHJva2Utd2lkdGg9IjIiLz48L3N2Zz4=";
+                                                        }}
+                                                    />
+                                                </div>
+                                                <div className="absolute top-1 left-1 right-1 flex items-center justify-between bg-black bg-opacity-50 text-white text-xs px-2 py-1 rounded">
+                                                    <div>
+                                                        <div className="flex items-center gap-1">
+                                                            <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
+                                                                <path
+                                                                    fillRule="evenodd"
+                                                                    d="M3 4a1 1 0 011-1h12a1 1 0 011 1v12a1 1 0 01-1 1H4a1 1 0 01-1-1V4zm5 3a2 2 0 11-4 0 2 2 0 014 0zm7.5 7.5l-3-3-1.5 1.5-3-3L3 13.5V16h14v-1.5z"
+                                                                    clipRule="evenodd"
+                                                                />
+                                                            </svg>
+                                                            <span>{gallery.fileName}</span>
+                                                            <label className="ml-2 cursor-pointer bg-white/20 hover:bg-white/30 text-white px-2 py-0.5 rounded">
+                                                                <input
+                                                                    type="file"
+                                                                    accept="image/png, image/jpeg, image/webp"
+                                                                    className="hidden"
+                                                                    onChange={(e) => handleImageUpload(e, gallery.id)}
+                                                                />
+                                                                Upload
+                                                            </label>
+                                                        </div>
+                                                        <div className="text-gray-300 text-xs">316 KB</div>
+                                                    </div>
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => handleRemoveGallery(gallery.id)}
+                                                        className="text-white hover:text-red-300 ml-2"
+                                                    >
+                                                        ×
+                                                    </button>
+                                                </div>
+                                            </div>
+
+                                            <div>
+                                                <label className="block text-sm font-medium text-gray-700 mb-1">Title</label>
+                                                <input
+                                                    type="text"
+                                                    value={gallery.title}
+                                                    onChange={(e) => handleGalleryChange(gallery.id, "title", e.target.value)}
+                                                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm text-black"
+                                                    placeholder="Sneakers"
+                                                />
+                                            </div>
+
+                                            <div>
+                                                <label className="block text-sm font-medium text-gray-700 mb-1">Alt Text</label>
+                                                <input
+                                                    type="text"
+                                                    value={gallery.alt}
+                                                    onChange={(e) => handleGalleryChange(gallery.id, "alt", e.target.value)}
+                                                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm text-black"
+                                                    placeholder="Slick formal sneaker shoes"
+                                                />
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div> */}
 
                             {/* Variants */}
                             <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
@@ -750,8 +740,8 @@ export default function CreateProductPage() {
                                                     />
                                                     <span className="text-sm text-gray-700">Single Price for All Variant</span>
                                                 </label>
-                                                
-                                                {/* {pricingType === "single" && (
+
+                                                {pricingType === "single" && (
                                                     <div className="ml-6">
                                                         <div className="flex items-center gap-2">
                                                             <span className="text-sm text-gray-600">Price (Rp)</span>
@@ -764,7 +754,7 @@ export default function CreateProductPage() {
                                                             />
                                                         </div>
                                                     </div>
-                                                )} */}
+                                                )}
 
                                                 <label className="flex items-center gap-3">
                                                     <input

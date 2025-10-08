@@ -23,6 +23,7 @@ interface Variant {
 }
 
 export default function EditProductPage() {
+  const [activeLang, setActiveLang] = useState<"id" | "en">("id");
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
 
@@ -50,6 +51,15 @@ export default function EditProductPage() {
   const [pricingType, setPricingType] = useState<"single" | "individual">("single");
   const [singlePrice, setSinglePrice] = useState("");
   const [individualPrices, setIndividualPrices] = useState<{ [key: string]: string }>({});
+  const [groupPrices, setGroupPrices] = useState<{ [group: string]: string }>({});
+  const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({});
+  const [openSubGroups, setOpenSubGroups] = useState<Record<string, Record<string, boolean>>>({});
+
+  const isGroupOpen = (first: string) => openGroups[first] !== false;
+  const toggleGroup = (first: string) => setOpenGroups((prev) => ({ ...prev, [first]: !isGroupOpen(first) }));
+  const isSubOpen = (first: string, second: string) => openSubGroups[first]?.[second] ?? true;
+  const toggleSub = (first: string, second: string) =>
+    setOpenSubGroups((prev) => ({ ...prev, [first]: { ...(prev[first] || {}), [second]: !isSubOpen(first, second) } }));
 
   const handleInputChange = (
     e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>
@@ -124,11 +134,19 @@ export default function EditProductPage() {
 
         if (Array.isArray(data.variants_data) && data.variants_data.length > 0) {
           const prices: Record<string, string> = {};
+          const oneDimPrices: Record<string, string> = {};
           data.variants_data.forEach((variant: any) => {
-            const key = String(variant.label || "").replace(/ \| /g, "-");
-            if (key) prices[key] = String(variant.price ?? "");
+            const label = String(variant.label || "");
+            const parts = label.split(" | ");
+            if (parts.length === 1) {
+              oneDimPrices[parts[0]] = String(variant.price ?? "");
+            } else {
+              const key = parts.join("-");
+              prices[key] = String(variant.price ?? "");
+            }
           });
-          setIndividualPrices(prices);
+          if (Object.keys(oneDimPrices).length) setGroupPrices(oneDimPrices);
+          if (Object.keys(prices).length) setIndividualPrices(prices);
         }
       } catch {
         setErrorMessage("Gagal memuat data produk");
@@ -227,6 +245,16 @@ export default function EditProductPage() {
     return combos;
   };
 
+  const groupedCombinations = () => {
+    const grouped: { [key: string]: string[][] } = {};
+    generateVariantCombinations().forEach((comb) => {
+      const first = comb[0] || "Default";
+      if (!grouped[first]) grouped[first] = [];
+      grouped[first].push(comb);
+    });
+    return grouped;
+  };
+
   const handleUpdate = async () => {
     if (submitting) return;
     setSubmitting(true);
@@ -267,15 +295,28 @@ export default function EditProductPage() {
         if (g.alt) payload.append(`gallery[${index}][alt]`, g.alt);
       });
 
-      const variantPayload = Object.entries(individualPrices).map(([key, price]) => ({
-        labels: key.split("-"),
-        price: Number(price),
-        stock: 0,
-        active: true,
-      }));
-      if (variantPayload.length > 0) {
-        payload.append("variant_prices", JSON.stringify(variantPayload));
+      let variantPayload: Array<{ labels: string[]; price: number; stock: number; active: boolean }> = [];
+      if (pricingType === "individual") {
+        const valids = getValidVariants();
+        const combos = generateVariantCombinations();
+        if (valids.length === 1) {
+          // one-dimension: use groupPrices keyed by first option
+          const missing: string[] = [];
+          combos.forEach((comb) => {
+            const label = comb[0];
+            const priceValue = groupPrices[label];
+            if (priceValue === undefined || priceValue === "") missing.push(label);
+            else
+              variantPayload.push({ labels: comb, price: Number(priceValue), stock: 0, active: true });
+          });
+        } else if (valids.length >= 2) {
+          Object.entries(individualPrices).forEach(([key, price]) => {
+            if (price !== undefined && price !== "")
+              variantPayload.push({ labels: key.split("-"), price: Number(price), stock: 0, active: true });
+          });
+        }
       }
+      if (variantPayload.length > 0) payload.append("variant_prices", JSON.stringify(variantPayload));
 
       await api.patch(`/products/${id}`, payload);
       setSuccessMessage("Produk berhasil diperbarui!");
@@ -309,7 +350,22 @@ export default function EditProductPage() {
           </CreateButton>
         </div>
       </div>
-
+      <div className="flex gap-2 mb-4">
+  <button
+    type="button"
+    onClick={() => setActiveLang("id")}
+    className={`px-3 py-1 rounded ${activeLang === "id" ? "bg-blue-600 text-white" : "bg-gray-200 text-gray-800"}`}
+  >
+    🇮🇩 Indonesia
+  </button>
+  <button
+    type="button"
+    onClick={() => setActiveLang("en")}
+    className={`px-3 py-1 rounded ${activeLang === "en" ? "bg-blue-600 text-white" : "bg-gray-200 text-gray-800"}`}
+  >
+    🇬🇧 English
+  </button>
+</div>
       {errorMessage && (
         <div className="bg-red-50 text-red-700 border border-red-200 rounded-lg p-3 text-sm">{errorMessage}</div>
       )}
@@ -506,45 +562,6 @@ export default function EditProductPage() {
               ))}
             </div>
           </div>
-        </div>
-
-        {/* Right */}
-        <div className="space-y-6">
-          {/* SEO */}
-          <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-            <h2 className="text-lg font-semibold text-gray-900 mb-6">SEO</h2>
-            <div className="mb-4">
-              <label className="block text-sm font-medium text-gray-700 mb-2">Tags</label>
-              <textarea
-                rows={2}
-                name="tags"
-                value={formData.tags}
-                onChange={handleInputChange}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm text-black"
-                placeholder="summer, men, sport"
-              />
-            </div>
-            <div className="mb-4">
-              <label className="block text-sm font-medium text-gray-700 mb-2">SEO Keyword</label>
-              <input
-                type="text"
-                name="keyword"
-                value={formData.keyword}
-                onChange={handleInputChange}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm text-black"
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">SEO Description</label>
-              <textarea
-                rows={3}
-                name="seoDescription"
-                value={formData.seoDescription}
-                onChange={handleInputChange}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm text-black"
-              />
-            </div>
-          </div>
 
           {/* Pricing / Variants */}
           <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
@@ -659,36 +676,169 @@ export default function EditProductPage() {
               </div>
             </div>
 
-            {pricingType === "individual" && (
-              <div className="space-y-3">
-                <h4 className="text-sm font-medium text-gray-700">Set Prices per Combination</h4>
-                {variantCombinations.length === 0 ? (
-                  <div className="text-xs text-gray-500">Tambahkan opsi varian untuk menentukan harga.</div>
-                ) : (
-                  <div className="space-y-2">
-                    {variantCombinations.map((comb, i) => {
-                      const key = comb.join("-");
-                      return (
-                        <div key={i} className="flex items-center justify-between gap-3">
-                          <div className="text-sm text-gray-700">{comb.join(" | ")}</div>
+            {/* Harga per KELOMPOK (muncul hanya saat 1 dimensi varian) */}
+            {pricingType === "individual" && validVariantCount === 1 && (
+              <div className="space-y-4">
+                {Object.keys(groupedCombinations()).map((firstOption) => (
+                  <div key={firstOption} className="border border-gray-200 rounded-lg">
+                    {/* Header level-1 */}
+                    <div className="bg-gray-50 px-4 py-3 border-b border-gray-200 flex items-center justify-between">
+                      <h5 className="font-medium text-gray-900">{firstOption}</h5>
+                      <button
+                        type="button"
+                        onClick={() => toggleGroup(firstOption)}
+                        className="text-gray-400 hover:text-gray-600"
+                        aria-label={`Toggle ${firstOption}`}
+                      >
+                        <svg className={`w-4 h-4 transition-transform ${isGroupOpen(firstOption) ? "" : "rotate-180"}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                        </svg>
+                      </button>
+                    </div>
+                    {/* Body level-1 */}
+                    {isGroupOpen(firstOption) && (
+                      <div className="p-4">
+                        <div className="flex items-center gap-3 text-sm">
+                          <span className="text-gray-600">Rp</span>
                           <input
                             type="number"
-                            value={individualPrices[key] || ""}
-                            onChange={(e) => setIndividualPrices((prev) => ({ ...prev, [key]: e.target.value }))}
-                            className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm text-black w-40"
+                            value={groupPrices[firstOption] ?? ""}
+                            onChange={(e) => setGroupPrices((prev) => ({ ...prev, [firstOption]: e.target.value }))}
+                            className="px-2 py-1 border border-gray-300 rounded text-sm text-black w-32"
+                            placeholder="0"
                             min={0}
                           />
                         </div>
-                      );
-                    })}
+                      </div>
+                    )}
                   </div>
-                )}
+                ))}
+              </div>
+            )}
+
+            {/* Harga per KOMBINASI (muncul saat >= 2 dimensi varian) */}
+            {pricingType === "individual" && validVariantCount >= 2 && (
+              <div className="space-y-4">
+                {Object.entries(groupedCombinations()).map(([firstOption, combinations]) => (
+                  <div key={firstOption} className="border border-gray-200 rounded-lg">
+                    {/* Header level-1 */}
+                    <div className="bg-gray-50 px-4 py-3 border-b border-gray-200 flex items-center justify-between">
+                      <h5 className="font-medium text-gray-900">{firstOption}</h5>
+                      <button
+                        type="button"
+                        onClick={() => toggleGroup(firstOption)}
+                        className="text-gray-400 hover:text-gray-600"
+                        aria-label={`Toggle ${firstOption}`}
+                      >
+                        <svg className={`w-4 h-4 transition-transform ${isGroupOpen(firstOption) ? "" : "rotate-180"}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                        </svg>
+                      </button>
+                    </div>
+                    {/* Body level-1 */}
+                    {isGroupOpen(firstOption) && (
+                      <div className="p-4">
+                        {Array.from(new Set((combinations as string[][]).map((c) => c[1])))
+                          .filter(Boolean)
+                          .map((secondOption) => (
+                            <div key={String(secondOption)} className="mb-4">
+                              {/* Sub-header level-2 */}
+                              <div className="bg-gray-100 px-3 py-2 border border-gray-200 rounded flex items-center justify-between">
+                                <h6 className="font-medium text-gray-800">{String(secondOption)}</h6>
+                                <button
+                                  type="button"
+                                  onClick={() => toggleSub(firstOption, String(secondOption))}
+                                  className="text-gray-400 hover:text-gray-600"
+                                  aria-label={`Toggle ${firstOption} - ${String(secondOption)}`}
+                                >
+                                  <svg className={`w-4 h-4 transition-transform ${isSubOpen(firstOption, String(secondOption)) ? "" : "rotate-180"}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                                  </svg>
+                                </button>
+                              </div>
+                              {/* Inputs level-2 */}
+                              {isSubOpen(firstOption, String(secondOption)) && (
+                                <div className="mt-3 space-y-2">
+                                  {(combinations as string[][])
+                                    .filter((c) => c[1] === secondOption)
+                                    .map((comb, idx) => {
+                                      const key = comb.join("-");
+                                      return (
+                                        <div key={idx} className="flex items-center gap-3 text-sm">
+                                          <div className="text-gray-700 min-w-[10rem]">
+                                            {comb.map((label, i) => (
+                                              <span key={i}>
+                                                {label}
+                                                {i < comb.length - 1 ? " | " : ""}
+                                              </span>
+                                            ))}
+                                          </div>
+                                          <span className="text-gray-600">Rp</span>
+                                          <input
+                                            type="number"
+                                            value={individualPrices[key] || ""}
+                                            onChange={(e) => setIndividualPrices((prev) => ({ ...prev, [key]: e.target.value }))}
+                                            className="px-2 py-1 border border-gray-300 rounded text-sm text-black w-32"
+                                            placeholder="0"
+                                            min={0}
+                                          />
+                                        </div>
+                                      );
+                                    })}
+                                </div>
+                              )}
+                            </div>
+                          ))}
+                      </div>
+                    )}
+                  </div>
+                ))}
               </div>
             )}
           </div>
+        </div>
+
+        {/* Right */}
+        <div className="space-y-6">
+          {/* SEO */}
+          <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+            <h2 className="text-lg font-semibold text-gray-900 mb-6">SEO</h2>
+            <div className="mb-4">
+              <label className="block text-sm font-medium text-gray-700 mb-2">Tags</label>
+              <textarea
+                rows={2}
+                name="tags"
+                value={formData.tags}
+                onChange={handleInputChange}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm text-black"
+                placeholder="summer, men, sport"
+              />
+            </div>
+            <div className="mb-4">
+              <label className="block text-sm font-medium text-gray-700 mb-2">SEO Keyword</label>
+              <input
+                type="text"
+                name="keyword"
+                value={formData.keyword}
+                onChange={handleInputChange}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm text-black"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">SEO Description</label>
+              <textarea
+                rows={3}
+                name="seoDescription"
+                value={formData.seoDescription}
+                onChange={handleInputChange}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm text-black"
+              />
+            </div>
+          </div>
+
+          
         </div>
       </div>
     </div>
   );
 }
-

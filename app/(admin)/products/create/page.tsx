@@ -7,15 +7,17 @@ import { CreateButton, CancelButton } from "@/components/ui/ActionButton";
 import ToggleSwitch from "@/components/ui/ToggleSwitch";
 import { DeleteButton as DeleteIcon } from "@/components/ui/DeleteIcon";
 import AsyncSelect from "react-select/async";
+import ProductGallery from "./_components/ProductGallery";
 
 interface Gallery {
     id: number;
-    image: string;
+    image: string;      // untuk preview
+    fileName: string;
     title: string;
     alt: string;
-    fileName: string;
+    file?: File | null; // ← file asli untuk FormData
     uploading?: boolean;
-}
+  }
 
 interface Variant {
     id: number;
@@ -28,6 +30,9 @@ export default function CreateProductPage() {
     const [submitting, setSubmitting] = useState(false);
     const [errorMessage, setErrorMessage] = useState<string | null>(null);
     const [successMessage, setSuccessMessage] = useState<string | null>(null);
+      // 🆕 Tambahkan state untuk bahasa
+    const [language, setLanguage] = useState<"id" | "en">("en");
+
     const [formData, setFormData] = useState({
         name: "",
         slug: "",
@@ -39,6 +44,7 @@ export default function CreateProductPage() {
         keyword: "",
         seoDescription: "",
         featured: false,
+        heel_height_cm: "",    // ← tambahkan ini
     });
 
 
@@ -93,192 +99,226 @@ export default function CreateProductPage() {
         return Number.isFinite(numeric) ? numeric : null;
     };
 
-    const isRealGalleryImage = (src: string) => Boolean(src && !src.startsWith("/api/placeholder"));
+   // const isRealGalleryImage = (src: string) => Boolean(src && !src.startsWith("/api/placeholder"));
 
 
-    const handleCreate = async () => {
-        if (submitting) return;
+   const handleCreate = async () => {
+    setErrorMessage(null);
+    setSuccessMessage(null);
 
-        setErrorMessage(null);
-        setSuccessMessage(null);
+    // const name = formData.name.trim();
+        // const description = formData.description.trim();
+    const slug = formData.slug.trim();
 
-        const name = formData.name.trim();
-        const slug = formData.slug.trim();
-        const description = formData.description.trim();
-        const categoryId = formData.category_id;
+    const categoryId = formData.category_id;
+    const name_id = (formData as any).name_id?.trim() || "";
+    const name_en = (formData as any).name_en?.trim() || "";
+    const description_id = (formData as any).description_id?.trim() || "";
+    const description_en = (formData as any).description_en?.trim() || "";
+    const errors: string[] = [];
+    if (!name_en) errors.push("Nama produk wajib diisi.");
+    if (!slug) errors.push("Slug wajib diisi.");
+    if (!description_en) errors.push("Deskripsi wajib diisi.");
+    if (!categoryId) errors.push("Kategori wajib dipilih.");
+  
+    const pricingMode = pricingType === "single" ? "single" : "per_variant";
+    // const rootPriceValue =
+    //   pricingMode === "single"
+    //     ? parseNumber(singlePrice || formData.price)
+    //     : parseNumber(formData.price);
 
-        const errors: string[] = [];
-        if (!name) errors.push("Nama produk wajib diisi.");
-        if (!slug) errors.push("Slug wajib diisi.");
-        if (!description) errors.push("Deskripsi wajib diisi.");
-        if (!categoryId) errors.push("Kategori wajib dipilih.");
+    const rootPriceValue =parseNumber( formData.price)
+  
+    if (pricingMode === "single" && rootPriceValue == null) {
+      errors.push("Harga produk wajib diisi.");
+    }
+  
+    const validVariants = getValidVariants();
+    const variantCombinations = generateVariantCombinations();
+   
+    // if (pricingMode === "per_variant" && validVariants.length === 0) {
+    //   errors.push("Tambahkan minimal satu varian untuk menggunakan harga per kombinasi.");
+    // }
+  
+    if (
+      pricingMode === "per_variant" &&
+      validVariants.length > 0 &&
+      variantCombinations.length === 0
+    ) {
+      errors.push("Lengkapi opsi varian sebelum menyimpan.");
+    }
+  
+    if (errors.length > 0) {
+      setErrorMessage(errors[0]);
+      return;
+    }
+  
+    setSubmitting(true);
+   
+    try {
+      // ── 1️⃣ Siapkan FormData
+      const fd = new FormData();
+      fd.append("status", formData.featured ? "1" : "0");
+      fd.append("category_id", String(categoryId));
+      fd.append("pricing_mode", pricingMode);
+    //   fd.append("name[id]", name);
+    //   fd.append("name[en]", name);
+    //   fd.append("description[id]", description);
+    //   fd.append("description[en]", description);
 
-        const pricingMode = pricingType === "single" ? "single" : "per_variant";
-        const rootPriceValue =
-            pricingMode === "single"
-                ? parseNumber(singlePrice || formData.price)
-                : parseNumber(formData.price);
+        fd.append("name[id]", name_id);
+        fd.append("name[en]", name_en);
+        fd.append("description[id]", description_id);
+        fd.append("description[en]", description_en);
+      fd.append("slug", slug);
+      fd.append("heel_height_cm", formData.heel_height_cm || "0");
+ 
+      // ── 2️⃣ SEO
+      const seoTags = formData.tags
+        .split(/[,\n]/)
+        .map((tag) => tag.trim())
+        .filter(Boolean);
+      seoTags.forEach((tag, index) => {
+        fd.append(`seo_tags[${index}]`, tag);
+      });
+  
+    //   if (formData.keyword.trim()) {
+    //     fd.append("seo_keyword", formData.keyword.trim());
+    //   }
+    //   if (formData.seoDescription.trim()) {
+    //     fd.append("seo_description", formData.seoDescription.trim());
+    //   }
 
-        if (pricingMode === "single" && rootPriceValue == null) {
-            errors.push("Harga produk wajib diisi.");
-        }
+    const keyword_id = (formData as any).keyword_id?.trim() || "";
+const keyword_en = (formData as any).keyword_en?.trim() || "";
+const seoDesc_id = (formData as any).seoDescription_id?.trim() || "";
+const seoDesc_en = (formData as any).seoDescription_en?.trim() || "";
 
-        const validVariants = getValidVariants();
-        const variantCombinations = generateVariantCombinations();
-
-        if (pricingMode === "per_variant" && validVariants.length === 0) {
-            errors.push("Tambahkan minimal satu varian untuk menggunakan harga individual.");
-        }
-
-        if (
-            pricingMode === "per_variant" &&
-            validVariants.length > 0 &&
-            variantCombinations.length === 0
-        ) {
-            errors.push("Lengkapi opsi varian sebelum menyimpan.");
-        }
-
-        if (errors.length > 0) {
-            setErrorMessage(errors[0]);
-            return;
-        }
-
-        setSubmitting(true);
-
-        try {
-            const attributes = validVariants
-                .map((variant, index) => {
-                    const options = variant.options.map((option) => option.trim()).filter(Boolean);
-                    if (options.length === 0) {
-                        return null;
-                    }
-                    const variantName = variant.name.trim() || `Variant ${index + 1}`;
-                    return { name: variantName, options };
-                })
-                .filter(Boolean) as { name: string; options: string[] }[];
-                const seoTags = formData.tags
-                .split(/[,\n]/)
-                .map((tag) => tag.trim())
-                .filter(Boolean);
-
-            const galleryPayload = galleries
-                .map((gallery, index) => ({
-                    image: gallery.image,
-                    title: gallery.title || undefined,
-                    alt: gallery.alt || undefined,
-                    sort: index,
-                }))
-                .filter((item) => isRealGalleryImage(item.image));
-
-            const variantPricesPayload: {
-                labels: string[];
-                price: number;
-                stock: number;
-                active: boolean;
-            }[] = [];
-
-            if (pricingMode === "per_variant" && variantCombinations.length > 0) {
-                const missingPrices: string[] = [];
-
-                if (validVariants.length === 1) {
-                    variantCombinations.forEach((combination) => {
-                        const label = combination[0];
-                        const priceValue = parseNumber(groupPrices[label]);
-                        if (priceValue == null) {
-                            missingPrices.push(label);
-                        } else {
-                            variantPricesPayload.push({
-                                labels: combination,
-                                price: priceValue,
-                                stock: 0,
-                                active: true,
-                            });
-                        }
-                    });
-                } else {
-                    variantCombinations.forEach((combination) => {
-                        const key = combination.join("-");
-                        const priceValue = parseNumber(individualPrices[key]);
-                        if (priceValue == null) {
-                            missingPrices.push(combination.join(" | "));
-                        } else {
-                            variantPricesPayload.push({
-                                labels: combination,
-                                price: priceValue,
-                                stock: 0,
-                                active: true,
-                            });
-                        }
-                    });
-                }
-
-                if (missingPrices.length > 0) {
-                    setErrorMessage(
-                        `Lengkapi harga untuk kombinasi varian: ${missingPrices.join(", ")}`
-                    );
-                    return;
-                }
-            }
-
-            const payload: Record<string, any> = {
-                status: formData.featured,
-                category_id: categoryId,
-                pricing_mode: pricingMode,
-                name: {
-                    id: name,
-                    en: name,
-                },
-                description: {
-                    id: description,
-                    en: description,
-                },
-                slug,
-                seo_tags: seoTags,
-                seo_keyword: formData.keyword.trim() || undefined,
-                seo_description: formData.seoDescription.trim() || undefined,
+if (keyword_id) fd.append("seo_keyword[id]", keyword_id);
+if (keyword_en) fd.append("seo_keyword[en]", keyword_en);
+if (seoDesc_id) fd.append("seo_description[id]", seoDesc_id);
+if (seoDesc_en) fd.append("seo_description[en]", seoDesc_en);
+    
+      // ── 3️⃣ Harga Single
+      if (pricingMode === "single" && rootPriceValue != null) {
+        fd.append("price", String(rootPriceValue));
+      }
+   
+      // ── 4️⃣ Attributes (varian)
+      const attributes = validVariants.map((variant, index) => ({
+        name: variant.name.trim() || `Variant ${index + 1}`,
+        options: variant.options.map((o) => o.trim()).filter(Boolean),
+      }));
+      attributes.forEach((attr, i) => {
+        fd.append(`attributes[${i}][name]`, attr.name);
+        attr.options.forEach((opt, j) => {
+          fd.append(`attributes[${i}][options][${j}]`, opt);
+        });
+      });
+    
+      // ── 5️⃣ Harga varian
+      if (pricingMode === "per_variant" && variantCombinations.length > 0) {
+        const variantPricesPayload: {
+          labels: string[];
+          price: number;
+          stock: number;
+          active: boolean;
+        }[] = [];
+  
+        if (validVariants.length === 1) {
+          variantCombinations.forEach((combination) => {
+            const label = combination[0];
+            const priceValue = parseNumber(groupPrices[label]);
+            if (priceValue != null) {
+              variantPricesPayload.push({
+                labels: combination,
+                price: priceValue,
                 stock: 0,
-            };
-
-            if (rootPriceValue != null) {
-                payload.price = rootPriceValue;
+                active: true,
+              });
             }
-
-            if (attributes.length > 0) {
-                payload.attributes = attributes;
+          });
+        } else {
+          variantCombinations.forEach((combination) => {
+            const key = combination.join("-");
+            const priceValue = parseNumber(individualPrices[key]);
+            if (priceValue != null) {
+              variantPricesPayload.push({
+                labels: combination,
+                price: priceValue,
+                stock: 0,
+                active: true,
+              });
             }
-
-            if (galleryPayload.length > 0) {
-                payload.gallery = galleryPayload;
-            }
-
-            if (pricingMode === "per_variant" && variantPricesPayload.length > 0) {
-                payload.variant_prices = variantPricesPayload;
-            }
-
-            const response = await api.post("/products", payload);
-            const message =
-                (response.data as any)?.message || "Produk berhasil dibuat.";
-            setSuccessMessage(message);
-            setTimeout(() => {
-                router.push("/products");
-            }, 800);
-        } catch (error: any) {
-            const response = error?.response?.data;
-            if (response?.errors) {
-                const messages = Object.values(response.errors)
-                    .flat()
-                    .map((msg: unknown) => String(msg));
-                setErrorMessage(
-                    messages.length ? messages.join(", ") : response.message || "Gagal membuat produk."
-                );
-            } else {
-                setErrorMessage(response?.message || error?.message || "Gagal membuat produk.");
-            }
-        } finally {
-            setSubmitting(false);
+          });
         }
-    };
+  
+        variantPricesPayload.forEach((vp, i) => {
+          vp.labels.forEach((label, j) => {
+            fd.append(`variant_prices[${i}][labels][${j}]`, label);
+          });
+          fd.append(`variant_prices[${i}][price]`, String(vp.price));
+          fd.append(`variant_prices[${i}][stock]`, String(vp.stock));
+          fd.append(`variant_prices[${i}][active]`, vp.active ? "1" : "0");
+        });
+      }
+ 
+      // ── 6️⃣ Gallery (file upload)
+      galleries.forEach((g, i) => {
+        if (g.file) {
+          fd.append(`gallery[${i}][image]`, g.file);
+        }
+        if (g.title) fd.append(`gallery[${i}][title]`, g.title);
+        if (g.alt) fd.append(`gallery[${i}][alt]`, g.alt);
+        fd.append(`gallery[${i}][sort]`, String(i));
+      });
+    
+      try {
+        // ── 7️⃣ Kirim
+        // const res = await api.post("/products", fd as any, {
+        //   headers: { "Content-Type": "multipart/form-data" },
+        // });
 
+        const res = await api.post("/products", fd as any);
+      
+        // ✅ Jika sukses
+        setSuccessMessage(res.data?.message || "Produk berhasil dibuat.");
+        setErrorMessage(null);
+      
+        setTimeout(() => {
+          router.push("/products");
+        }, 800);
+      
+      } catch (err: any) {
+        console.error("Gagal membuat produk:", JSON.stringify(err));
+      
+        // Ambil pesan error dari response API (jika ada)
+        const errorMsg =
+          err.response?.data?.message ||
+          err.response?.data?.error ||
+          "Terjadi kesalahan saat membuat produk. Silakan coba lagi.";
+        console.log()
+        setErrorMessage(errorMsg);
+        setSuccessMessage(null);
+      }
+      // ── 7️⃣ Kirim
+     
+    } catch (error: any) {
+      const response = error?.response?.data;
+      if (response?.errors) {
+        const messages = Object.values(response.errors)
+          .flat()
+          .map((msg: unknown) => String(msg));
+        setErrorMessage(
+          messages.length ? messages.join(", ") : response.message || "Gagal membuat produk."
+        );
+      } else {
+        setErrorMessage(response?.message || error?.message || "Gagal membuat produk.");
+      }
+    } finally {
+      setSubmitting(false);
+    }
+  };
     const handleCancel = () => {
         router.push("/products");
     };
@@ -304,37 +344,6 @@ export default function CreateProductPage() {
         setGalleries((prev) => [...prev, newGallery]);
     };
 
-    const handleImageUpload = useCallback(async (e: React.ChangeEvent<HTMLInputElement>, id: number) => {
-        const file = e.target.files?.[0];
-        if (!file) return;
-
-        const allowed = ["image/jpeg", "image/png", "image/webp"];
-        if (!allowed.includes(file.type)) {
-            setErrorMessage("Tipe file tidak didukung. Gunakan JPG/PNG/WEBP.");
-            return;
-        }
-
-        if (file.size > 2 * 1024 * 1024) {
-            setErrorMessage("Ukuran file maksimal 2MB");
-            return;
-        }
-
-        setGalleries((prev) => prev.map((g) => (g.id === id ? { ...g, uploading: true } : g)));
-
-        const formDataUp = new FormData();
-        formDataUp.append("file", file);
-
-        try {
-            const res = await api.post<{ status: string; data: { url: string } }>("/api/v1/uploads", formDataUp);
-            const imageUrl = (res as any)?.data?.data?.url || "";
-            setGalleries((prev) =>
-                prev.map((g) => (g.id === id ? { ...g, image: imageUrl, fileName: file.name, uploading: false } : g))
-            );
-        } catch (err) {
-            setErrorMessage("Gagal mengunggah gambar");
-            setGalleries((prev) => prev.map((g) => (g.id === id ? { ...g, uploading: false } : g)));
-        }
-    }, []);
 
     const loadCategoryOptions = useCallback(async (inputValue: string) => {
         try {
@@ -436,7 +445,6 @@ export default function CreateProductPage() {
         return grouped;
     };
 
-    const formatDescription = (fmt: string) => console.log("Formatting:", fmt);
 
     return (
         <div className="min-h-full">
@@ -450,9 +458,26 @@ export default function CreateProductPage() {
             </div>
 
             {/* Header */}
-            <div className="bg-white border-b border-gray-200 px-6 py-6">
-                <h1 className="text-2xl font-semibold text-gray-900">New Product</h1>
-            </div>
+         {/* Header */}
+      <div className="bg-white border-b border-gray-200 px-6 py-6 flex items-center justify-between">
+        <h1 className="text-2xl font-semibold text-gray-900">New Product</h1>
+
+        {/* 🆕 Language selector */}
+        <div className="flex items-center gap-2">
+          <label htmlFor="language" className="text-sm font-medium text-gray-700">
+            Language:
+          </label>
+          <select
+            id="language"
+            value={language}
+            onChange={(e) => setLanguage(e.target.value as "id" | "en")}
+            className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent text-black"
+          >
+            <option value="id">🇮🇩 Indonesia</option>
+            <option value="en">🇬🇧 English</option>
+          </select>
+        </div>
+      </div>
 
             {/* Main */}
             <div className="bg-gray-50 min-h-screen">
@@ -479,15 +504,28 @@ export default function CreateProductPage() {
                                     <label htmlFor="name" className="block text-sm font-medium text-gray-700 mb-2">
                                         Name <span className="text-red-500">*</span>
                                     </label>
-                                    <input
-                                        type="text"
-                                        id="name"
-                                        name="name"
-                                        value={formData.name}
-                                        onChange={handleInputChange}
-                                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm text-black"
-                                        placeholder=""
-                                    />
+                            
+
+{(["id", "en"] as const).map((langKey) => (
+    <div
+      key={langKey}
+      className={`${language !== langKey ? "hidden" : "block"}`}
+    >
+      <input
+        type="text"
+        name={`name_${langKey}`}
+        value={(formData as any)[`name_${langKey}`] || ""}
+        onChange={(e) =>
+          setFormData((prev) => ({
+            ...prev,
+            [`name_${langKey}`]: e.target.value,
+          }))
+        }
+        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm text-black"
+        placeholder={langKey === "id" ? "Nama produk (Indonesia)" : "Product name (English)"}
+      />
+    </div>
+  ))}
                                 </div>
 
                                 {/* Slug */}
@@ -519,16 +557,27 @@ export default function CreateProductPage() {
                                     <label htmlFor="description" className="block text-sm font-medium text-gray-700 mb-2">
                                         Description <span className="text-red-500">*</span>
                                     </label>
-                                  
-                                    <textarea
-                                        id="description"
-                                        name="description"
-                                        value={formData.description}
-                                        onChange={handleInputChange}
-                                        rows={8}
-                                        className="w-full px-3 py-2 border border-gray-300 border-t-0 rounded-b-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm text-black resize-none"
-                                        placeholder="Product description"
-                                    />
+                                    {(["id", "en"] as const).map((langKey) => (
+                                        <div
+                                        key={langKey}
+                                        className={`${language !== langKey ? "hidden" : "block"}`}
+                                        >
+                                        <textarea
+                                            name={`description_${langKey}`}
+                                            value={(formData as any)[`description_${langKey}`] || ""}
+                                            onChange={(e) =>
+                                            setFormData((prev) => ({
+                                                ...prev,
+                                                [`description_${langKey}`]: e.target.value,
+                                            }))
+                                            }
+                                            rows={8}
+                                            className="w-full px-3 py-2 border border-gray-300 border-t-0 rounded-b-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm text-black resize-none"
+                                            placeholder={langKey === "id" ? "Deskripsi produk (Indonesia)" : "Product description (English)"}
+                                        />
+                                        </div>
+                                    ))}
+                            
                                 </div>
 
                                 {/* Category */}
@@ -594,94 +643,33 @@ export default function CreateProductPage() {
                                         min={0}
                                     />
                                 </div>
-                            </div>
 
-                            {/* Galleries */}
-                            <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-                                <div className="flex items-center justify-between mb-6">
-                                    <h2 className="text-lg font-semibold text-gray-900">Galleries</h2>
-                                    <button
-                                        type="button"
-                                        onClick={handleAddGallery}
-                                        className="px-4 py-2 text-sm font-medium text-blue-600 bg-blue-50 border border-blue-200 rounded-lg hover:bg-blue-100 transition-colors"
-                                    >
-                                        Add Gallery
-                                    </button>
-                                </div>
-
-                                <div className="grid grid-cols-3 gap-6">
-                                    {galleries.map((gallery) => (
-                                        <div key={gallery.id} className="space-y-3">
-                                            <div className="relative group">
-                                                <div className="aspect-square border-2 border-gray-300 rounded-lg overflow-hidden bg-gray-50 flex items-center justify-center">
-                                                    <img
-                                                        src={gallery.image}
-                                                        alt={gallery.alt}
-                                                        className="w-full h-full object-cover rounded"
-                                                        onError={(e) => {
-                                                            e.currentTarget.src =
-                                                                "data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNDAiIGhlaWdodD0iNDAiIHZpZXdCb3g9IjAgMCA0MCA0MCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iNDAiIGhlaWdodD0iNDAiIGZpbGw9IiNGM0Y0RjYiLz48cGF0aCBkPSJNMjAgMzBDMjYuNjI3NCAzMCAzMCAyNi42Mjc0IDMwIDIwQzMwIDEzLjM3MjYgMjYuNjI3NCAxMCAyMCAxMEMxMy4zNzI2IDEwIDEwIDEzLjM3MjYgMTAgMjBDMTAgMjYuNjI3NiAxMy4zNzI2IDMwIDIwIDMwWiIgc3Ryb2tlPSIjOUNBM0FGIiBzdHJva2Utd2lkdGg9IjIiLz48cGF0aCBkPSJNMjAgMjRDMjIuMjA5MSAyNCAyNCAyMi4yMDkxIDI0IDIwQzI0IDE3Ljc5MDkgMjIuMjA5MSAxNiAyMCAxNkMxNy43OTA5IDE2IDE2IDE3Ljc5MDkgMTYgMjBDMTYgMjIuMjA5MSAxNy43OTA5IDI0IDIwIDI0WiIgc3Ryb2tlPSIjOUNBM0FGIiBzdHJva2Utd2lkdGg9IjIiLz48L3N2Zz4=";
-                                                        }}
-                                                    />
-                                                </div>
-                                                <div className="absolute top-1 left-1 right-1 flex items-center justify-between bg-black bg-opacity-50 text-white text-xs px-2 py-1 rounded">
-                                                    <div>
-                                                        <div className="flex items-center gap-1">
-                                                            <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
-                                                                <path
-                                                                    fillRule="evenodd"
-                                                                    d="M3 4a1 1 0 011-1h12a1 1 0 011 1v12a1 1 0 01-1 1H4a1 1 0 01-1-1V4zm5 3a2 2 0 11-4 0 2 2 0 014 0zm7.5 7.5l-3-3-1.5 1.5-3-3L3 13.5V16h14v-1.5z"
-                                                                    clipRule="evenodd"
-                                                                />
-                                                            </svg>
-                                                            <span>{gallery.fileName}</span>
-                                                            <label className="ml-2 cursor-pointer bg-white/20 hover:bg-white/30 text-white px-2 py-0.5 rounded">
-                                                                <input
-                                                                    type="file"
-                                                                    accept="image/png, image/jpeg, image/webp"
-                                                                    className="hidden"
-                                                                    onChange={(e) => handleImageUpload(e, gallery.id)}
-                                                                />
-                                                                Upload
-                                                            </label>
-                                                        </div>
-                                                        <div className="text-gray-300 text-xs">316 KB</div>
-                                                    </div>
-                                                    <button
-                                                        type="button"
-                                                        onClick={() => handleRemoveGallery(gallery.id)}
-                                                        className="text-white hover:text-red-300 ml-2"
-                                                    >
-                                                        ×
-                                                    </button>
-                                                </div>
-                                            </div>
-
-                                            <div>
-                                                <label className="block text-sm font-medium text-gray-700 mb-1">Title</label>
-                                                <input
-                                                    type="text"
-                                                    value={gallery.title}
-                                                    onChange={(e) => handleGalleryChange(gallery.id, "title", e.target.value)}
-                                                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm text-black"
-                                                    placeholder="Sneakers"
-                                                />
-                                            </div>
-
-                                            <div>
-                                                <label className="block text-sm font-medium text-gray-700 mb-1">Alt Text</label>
-                                                <input
-                                                    type="text"
-                                                    value={gallery.alt}
-                                                    onChange={(e) => handleGalleryChange(gallery.id, "alt", e.target.value)}
-                                                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm text-black"
-                                                    placeholder="Slick formal sneaker shoes"
-                                                />
-                                            </div>
-                                        </div>
-                                    ))}
+                                {/* Heel Height (cm) */}
+                                <div className="mb-6">
+                                    <label htmlFor="heel_height_cm" className="block text-sm font-medium text-gray-700 mb-2">
+                                        Heel Height (cm)
+                                    </label>
+                                    <input
+                                        type="number"
+                                        id="heel_height_cm"
+                                        name="heel_height_cm"
+                                        value={(formData as any).heel_height_cm ?? ""}
+                                        onChange={handleInputChange}
+                                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm text-black"
+                                        placeholder="e.g. 12"
+                                        min={0}
+                                    />
                                 </div>
                             </div>
+                            <ProductGallery
+                                galleries={galleries}
+                                onAddGallery={handleAddGallery}
+                                onRemoveGallery={handleRemoveGallery}
+                                onGalleryChange={handleGalleryChange}
+                              
+                                />
+                
+           
 
                             {/* Variants */}
                             <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
@@ -772,8 +760,8 @@ export default function CreateProductPage() {
                                                     />
                                                     <span className="text-sm text-gray-700">Single Price for All Variant</span>
                                                 </label>
-
-                                                {pricingType === "single" && (
+                                                
+                                                {/* {pricingType === "single" && (
                                                     <div className="ml-6">
                                                         <div className="flex items-center gap-2">
                                                             <span className="text-sm text-gray-600">Price (Rp)</span>
@@ -786,7 +774,7 @@ export default function CreateProductPage() {
                                                             />
                                                         </div>
                                                     </div>
-                                                )}
+                                                )} */}
 
                                                 <label className="flex items-center gap-3">
                                                     <input
@@ -958,30 +946,60 @@ export default function CreateProductPage() {
                                     <label htmlFor="keyword" className="block text-sm font-medium text-gray-700 mb-2">
                                         Keyword
                                     </label>
-                                    <input
-                                        type="text"
-                                        id="keyword"
-                                        name="keyword"
-                                        value={formData.keyword}
-                                        onChange={handleInputChange}
-                                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm text-black"
-                                        placeholder="SEO keywords"
-                                    />
+                                    {(["id", "en"] as const).map((langKey) => (
+        <div
+          key={langKey}
+          className={`${language !== langKey ? "hidden" : "block"}`}
+        >
+          <input
+            type="text"
+            name={`keyword_${langKey}`}
+            value={(formData as any)[`keyword_${langKey}`] || ""}
+            onChange={(e) =>
+              setFormData((prev) => ({
+                ...prev,
+                [`keyword_${langKey}`]: e.target.value,
+              }))
+            }
+            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm text-black"
+            placeholder={
+              langKey === "id"
+                ? "Kata kunci SEO (Indonesia)"
+                : "SEO keywords (English)"
+            }
+          />
+        </div>
+      ))}
                                 </div>
 
                                 <div className="mb-6">
                                     <label htmlFor="seoDescription" className="block text-sm font-medium text-gray-700 mb-2">
                                         Description
                                     </label>
-                                    <textarea
-                                        id="seoDescription"
-                                        name="seoDescription"
-                                        value={formData.seoDescription}
-                                        onChange={handleInputChange}
-                                        rows={6}
-                                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm text-black resize-none"
-                                        placeholder="SEO description"
-                                    />
+                                    {(["id", "en"] as const).map((langKey) => (
+        <div
+          key={langKey}
+          className={`${language !== langKey ? "hidden" : "block"}`}
+        >
+          <textarea
+            name={`seoDescription_${langKey}`}
+            value={(formData as any)[`seoDescription_${langKey}`] || ""}
+            onChange={(e) =>
+              setFormData((prev) => ({
+                ...prev,
+                [`seoDescription_${langKey}`]: e.target.value,
+              }))
+            }
+            rows={6}
+            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm text-black resize-none"
+            placeholder={
+              langKey === "id"
+                ? "Deskripsi SEO (Indonesia)"
+                : "SEO description (English)"
+            }
+          />
+        </div>
+      ))}
                                 </div>
                             </div>
                         </div>
