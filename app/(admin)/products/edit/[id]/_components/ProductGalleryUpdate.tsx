@@ -5,8 +5,10 @@ import React, { useState, useRef } from "react";
 interface Gallery {
   id: number;
   image: string;
-  title: string;
-  alt: string;
+  title_id?: string;
+  title_en?: string;
+  alt_id?: string;
+  alt_en?: string;
   fileName: string;
   uploading?: boolean;
 }
@@ -17,6 +19,7 @@ interface ProductGalleryProps {
   onRemoveGallery: (id: number) => void;
   onGalleryChange: (id: number, field: string, value: string) => void;
   // onImageUpload: (e: React.ChangeEvent<HTMLInputElement>, id: number) => void;
+  activeLang?: "id" | "en";
 }
 
 export default function ProductGallery({
@@ -24,6 +27,7 @@ export default function ProductGallery({
   onAddGallery,
   onRemoveGallery,
   onGalleryChange,
+  activeLang = "id",
   // onImageUpload,
 }: ProductGalleryProps) {
   const [previews, setPreviews] = useState<Record<number, string>>({});
@@ -68,11 +72,12 @@ export default function ProductGallery({
                   className="aspect-square border-2 border-gray-800 rounded-lg overflow-hidden bg-gray-100 p-2 flex items-center justify-center cursor-pointer"
                   onClick={() => handleDivClick(gallery.id)}
                 >
+
                   
                   {imageSrc ? (
                     <img
                       src={imageSrc}
-                      alt={gallery.alt || "Preview"}
+                      alt={(activeLang === "id" ? gallery.alt_id : gallery.alt_en) || "Preview"}
                       className="w-full h-full object-cover rounded"
                       onError={(e) => {
                         e.currentTarget.src =
@@ -109,8 +114,9 @@ export default function ProductGallery({
                     onChange={(e) => handlePreviewUpload(e, gallery.id)}
                   />
                 </div>
-                {/* {imageSrc} */}
+            
                 {imageSrc && (
+             
                   <div className="absolute top-1 left-1 right-1 flex items-center justify-between bg-black bg-opacity-50 text-white text-xs px-2 py-1 rounded">
                     <div>
                       <div className="flex items-center gap-1">
@@ -140,32 +146,40 @@ export default function ProductGallery({
                 )}
               </div>
 
-              {/* Input Title */}
+              {/* Input Title (multilingual) */}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
                   Title
                 </label>
                 <input
                   type="text"
-                  value={gallery.title}
+                  value={activeLang === "id" ? (gallery.title_id || "") : (gallery.title_en || "")}
                   onChange={(e) =>
-                    onGalleryChange(gallery.id, "title", e.target.value)
+                    onGalleryChange(
+                      gallery.id,
+                      activeLang === "id" ? "title_id" : "title_en",
+                      e.target.value
+                    )
                   }
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm text-black"
                   placeholder="Sneakers"
                 />
               </div>
 
-              {/* Input Alt */}
+              {/* Input Alt (multilingual) */}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
                   Alt Text
                 </label>
                 <input
                   type="text"
-                  value={gallery.alt}
+                  value={activeLang === "id" ? (gallery.alt_id || "") : (gallery.alt_en || "")}
                   onChange={(e) =>
-                    onGalleryChange(gallery.id, "alt", e.target.value)
+                    onGalleryChange(
+                      gallery.id,
+                      activeLang === "id" ? "alt_id" : "alt_en",
+                      e.target.value
+                    )
                   }
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm text-black"
                   placeholder="Slick formal sneaker shoes"

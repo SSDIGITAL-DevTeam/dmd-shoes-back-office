@@ -42,8 +42,8 @@ type DisplayProduct = {
 
 const DEFAULT_META: ProductMeta = {
   current_page: 1,
- // per_page: 12,
-  per_page: 2,
+  per_page: 12,
+ // per_page: 2,
   total: 0,
   last_page: 1,
 };
@@ -247,12 +247,12 @@ export default function ProductsPage() {
         name: item.name_text || item.slug || `Produk ${item.id}`,
         priceLabel:
           priceNumber != null ? currencyFormatter.format(priceNumber) : "-",
-        stockLabel:
-          stockNumber != null ? numberFormatter.format(stockNumber) : "-",
+        // stockLabel:
+        //   stockNumber != null ? numberFormatter.format(stockNumber) : "-",
         status: resolveStatus(item.status),
         categoryName: item.category_name || "-",
         coverUrl: toImageUrl(item.cover_url ?? item.cover ?? null),
-      };
+      };  
     });
   }, [products, currencyFormatter, numberFormatter]);
 
@@ -350,7 +350,7 @@ export default function ProductsPage() {
                   ))}
                 </select>
 
-                <div className="flex items-center gap-1">
+                <div className="hidden flex items-center gap-1">
                   <select
                     value={sortField}
                     onChange={(event) => setSortField(event.target.value as SortField)}
@@ -377,25 +377,8 @@ export default function ProductsPage() {
                 </div>
               </div>
 
-              <div className="flex items-center gap-2">
-                <button
-                  className="relative inline-flex items-center justify-center rounded-md border border-gray-200 p-2 text-gray-500 hover:bg-gray-50"
-                  type="button"
-                  aria-label="Notifications"
-                >
-                  <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-                    <path
-                      strokeWidth="2"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      d="M15 17h5l-1.4-1.4A2 2 0 0 1 18 14.2V11a6 6 0 1 0-12 0v3.2c0 .53-.21 1.05-.6 1.44L4 17h5m6 0v1a3 3 0 1 1-6 0v-1h6z"
-                    />
-                  </svg>
-                  <span className="absolute -right-1 -top-1 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-amber-500 px-1 text-[10px] font-semibold text-white">
-                    0
-                  </span>
-                </button>
-
+              <div className="hidden flex items-center gap-2">
+             
                 <button
                   className="inline-flex items-center justify-center rounded-md border border-gray-200 p-2 text-gray-500 hover:bg-gray-50"
                   type="button"
@@ -464,12 +447,12 @@ export default function ProductsPage() {
                     >
                       Harga
                     </th>
-                    <th
+                    {/* <th
                       scope="col"
                       className="px-3 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 sm:px-6"
                     >
                       Stok
-                    </th>
+                    </th> */}
                     <th
                       scope="col"
                       className="px-3 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 sm:px-6"
@@ -531,9 +514,9 @@ export default function ProductsPage() {
                         <td className="whitespace-nowrap px-3 py-4 text-sm text-gray-900 sm:px-6">
                           {product.priceLabel}
                         </td>
-                        <td className="whitespace-nowrap px-3 py-4 text-sm text-gray-900 sm:px-6">
+                        {/* <td className="whitespace-nowrap px-3 py-4 text-sm text-gray-900 sm:px-6">
                           {product.stockLabel}
-                        </td>
+                        </td> */}
                         <td className="whitespace-nowrap px-3 py-4 sm:px-6">
                           <StatusBadge status={product.status} />
                         </td>
