@@ -1,0 +1,169 @@
+          {/* Galleries */}
+          <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+            <div className="flex items-center justify-between mb-6">
+              <h2 className="text-lg font-semibold text-gray-900">Galleries</h2>
+              <button
+                type="button"
+                onClick={handleAddGallery}
+                className="px-4 py-2 text-sm font-medium text-blue-600 bg-blue-50 border border-blue-200 rounded-lg hover:bg-blue-100 transition-colors"
+              >
+                Add Gallery
+              </button>
+            </div>
+
+            <div className="grid grid-cols-3 gap-6">
+              {galleries.map((gallery) => (
+                <div key={gallery.id} className="space-y-3">
+                  <div className="relative group">
+                    <div className="aspect-square border-2 border-gray-200 rounded-lg overflow-hidden flex items-center justify-center bg-gray-50">
+                      {gallery.image ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img src={gallery.image} alt={gallery.alt} className="object-cover w-full h-full" />
+                      ) : (
+                        <label className="cursor-pointer text-sm text-gray-500">
+                          <input
+                            type="file"
+                            accept="image/png, image/jpeg, image/webp"
+                            className="hidden"
+                            onChange={(e) => handleSelectGalleryImage(e, gallery.id)}
+                          />
+                          Upload Image
+                        </label>
+                      )}
+                    </div>
+                    <button
+                      type="button"
+                      aria-label="Remove image"
+                      onClick={() => handleRemoveGallery(gallery.id)}
+                      className="absolute top-2 right-2 bg-black bg-opacity-60 text-white rounded-full w-6 h-6 flex items-center justify-center hover:bg-opacity-80 transition"
+                    >
+                      ×
+                    </button>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Title</label>
+                    <input
+                      type="text"
+                      value={gallery.title}
+                      onChange={(e) => handleGalleryChange(gallery.id, "title", e.target.value)}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm text-black"
+                      placeholder="Sneakers"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Alt Text</label>
+                    <input
+                      type="text"
+                      value={gallery.alt}
+                      onChange={(e) => handleGalleryChange(gallery.id, "alt", e.target.value)}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm text-black"
+                      placeholder="Slick formal sneaker shoes"
+                    />
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Pricing / Variants */}
+          <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+            <h2 className="text-lg font-semibold text-gray-900 mb-6">Pricing & Variants</h2>
+
+            <div className="mb-6">
+              <h4 className="text-sm font-medium text-gray-700 mb-3">Set Pricing</h4>
+              <div className="space-y-3">
+                <label className="flex items-center gap-3">
+                  <input
+                    type="radio"
+                    name="pricingType"
+                    value="single"
+                    checked={pricingType === "single"}
+                    onChange={(e) => setPricingType(e.target.value as "single" | "individual")}
+                    className="text-blue-600"
+                  />
+                  <span className="text-sm text-gray-700">Single Price for All Variant</span>
+                </label>
+
+                {pricingType === "single" && (
+                  <div className="ml-6">
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm text-gray-600">Price (Rp)</span>
+                      <input
+                        type="number"
+                        value={singlePrice}
+                        onChange={(e) => setSinglePrice(e.target.value)}
+                        className="px-3 py-1 border border-gray-300 rounded text-sm text-black w-32"
+                        min={0}
+                      />
+                    </div>
+                  </div>
+                )}
+
+                <label className="flex items-center gap-3">
+                  <input
+                    type="radio"
+                    name="pricingType"
+                    value="individual"
+                    checked={pricingType === "individual"}
+                    onChange={(e) => setPricingType(e.target.value as "single" | "individual")}
+                    className="text-blue-600"
+                  />
+                  <span className="text-sm text-gray-700">Set Individual Prices</span>
+                </label>
+              </div>
+            </div>
+
+            {/* Variants editing */}
+            <div className="mb-6">
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="text-sm font-medium text-gray-700">Variant</h3>
+                <button
+                  type="button"
+                  onClick={handleAddVariant}
+                  disabled={variants.length >= 3}
+                  className={`px-3 py-1.5 text-sm font-medium rounded-lg transition-colors ${
+                    variants.length >= 3
+                      ? "text-gray-400 bg-gray-100 border border-gray-200 cursor-not-allowed"
+                      : "text-blue-600 bg-blue-50 border border-blue-200 hover:bg-blue-100"
+                  }`}
+                >
+                  Add Variant {variants.length >= 3 ? "(Max 3)" : ""}
+                </button>
+              </div>
+
+              <div className="space-y-4">
+                {variants.map((variant) => (
+                  <div key={variant.id} className="border border-gray-200 rounded-lg p-4">
+                    <div className="flex items-center gap-3 mb-3">
+                      <input
+                        type="text"
+                        value={variant.name}
+                        onChange={(e) => handleVariantNameChange(variant.id, e.target.value)}
+                        className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm text-black flex-1"
+                        placeholder={`Variant ${variant.id}`}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveVariant(variant.id)}
+                        className="text-red-600 text-sm"
+                      >
+                        Remove
+                      </button>
+                    </div>
+
+                    <div className="space-y-2">
+                      {variant.options.map((opt, idx) => (
+                        <div key={idx} className="flex items-center gap-2">
+                          <input
+                            type="text"
+                            value={opt}
+                            onChange={(e) => handleOptionChange(variant.id, idx, e.target.value)}
+                            className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm text-black flex-1"
+                            placeholder="Option"
+                          />
+                          {variant.options.length > 1 && (
+                            <button
+                              type="button"
+                              onClick={() => handleRemoveOption(variant.id, idx)}

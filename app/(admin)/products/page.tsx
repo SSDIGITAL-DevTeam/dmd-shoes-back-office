@@ -42,7 +42,8 @@ type DisplayProduct = {
 
 const DEFAULT_META: ProductMeta = {
   current_page: 1,
-  per_page: 12,
+ // per_page: 12,
+  per_page: 2,
   total: 0,
   last_page: 1,
 };

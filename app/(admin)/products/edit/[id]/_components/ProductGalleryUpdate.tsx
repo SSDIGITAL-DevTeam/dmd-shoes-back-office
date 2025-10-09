@@ -68,6 +68,7 @@ export default function ProductGallery({
                   className="aspect-square border-2 border-gray-800 rounded-lg overflow-hidden bg-gray-100 p-2 flex items-center justify-center cursor-pointer"
                   onClick={() => handleDivClick(gallery.id)}
                 >
+                  
                   {imageSrc ? (
                     <img
                       src={imageSrc}
@@ -99,6 +100,7 @@ export default function ProductGallery({
                   )}
 
                   {/* Input file tersembunyi */}
+                 
                   <input
                     ref={(el) => { fileInputs.current[gallery.id] = el; }}
                     type="file"
@@ -107,7 +109,7 @@ export default function ProductGallery({
                     onChange={(e) => handlePreviewUpload(e, gallery.id)}
                   />
                 </div>
-
+                {/* {imageSrc} */}
                 {imageSrc && (
                   <div className="absolute top-1 left-1 right-1 flex items-center justify-between bg-black bg-opacity-50 text-white text-xs px-2 py-1 rounded">
                     <div>
