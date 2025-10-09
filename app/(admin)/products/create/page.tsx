@@ -19,10 +19,15 @@ interface Gallery {
     uploading?: boolean;
   }
 
+interface LangText {
+    id: string;
+    en: string;
+}
+
 interface Variant {
     id: number;
-    name: string;
-    options: string[];
+    name: LangText;
+    options: LangText[];
 }
 
 export default function CreateProductPage() {
@@ -205,46 +210,98 @@ if (seoDesc_en) fd.append("seo_description[en]", seoDesc_en);
       }
    
       // ── 4️⃣ Attributes (varian)
-      const attributes = validVariants.map((variant, index) => ({
-        name: variant.name.trim() || `Variant ${index + 1}`,
-        options: variant.options.map((o) => o.trim()).filter(Boolean),
+      const attributes = getValidVariants().map((variant, index) => ({
+        name: {
+          id: (variant.name.id || variant.name.en || `Variant ${index + 1}`),
+          en: (variant.name.en || variant.name.id || `Variant ${index + 1}`),
+        },
+        options: variant.options
+          .filter((o) => (o.id || o.en).trim() !== "")
+          .map((o) => ({
+            id: o.id || o.en,
+            en: o.en || o.id,
+          })),
       }));
       attributes.forEach((attr, i) => {
-        fd.append(`attributes[${i}][name]`, attr.name);
+        fd.append(`attributes[${i}][name][id]`, attr.name.id);
+        fd.append(`attributes[${i}][name][en]`, attr.name.en);
         attr.options.forEach((opt, j) => {
-          fd.append(`attributes[${i}][options][${j}]`, opt);
+          fd.append(`attributes[${i}][options][${j}][id]`, opt.id);
+          fd.append(`attributes[${i}][options][${j}][en]`, opt.en);
         });
       });
     
       // ── 5️⃣ Harga varian
       if (pricingMode === "per_variant" && variantCombinations.length > 0) {
-        const variantPricesPayload: {
-          labels: string[];
+        type VPrice = {
+          labels: { id: string; en: string }[];
           price: number;
           stock: number;
           active: boolean;
-        }[] = [];
-  
-        if (validVariants.length === 1) {
-          variantCombinations.forEach((combination) => {
-            const label = combination[0];
-            const priceValue = parseNumber(groupPrices[label]);
+          size_eu?: number;
+        };
+
+        const valid = getValidVariants();
+
+        // Build combinations of option objects to derive bilingual labels
+        const optionCombos: LangText[][] = (() => {
+          if (valid.length === 0) return [];
+          let combos: LangText[][] = [[]];
+          valid.forEach((v) => {
+            const opts = v.options.filter((o) => (o.id || o.en).trim() !== "");
+            const next: LangText[][] = [];
+            combos.forEach((c) => opts.forEach((o) => next.push([...c, o])));
+            combos = next;
+          });
+          return combos;
+        })();
+
+        const variantPricesPayload: VPrice[] = [];
+
+        if (valid.length === 1) {
+          // Single dimension pricing by group
+          optionCombos.forEach((combination) => {
+            const opt = combination[0];
+            const displayFirst = opt.en || opt.id;
+            const priceValue = parseNumber(groupPrices[displayFirst]);
             if (priceValue != null) {
-              variantPricesPayload.push({
-                labels: combination,
+              // Label should be: `${variantName}: ${option}` in both languages
+              const v0 = valid[0];
+              const label: { id: string; en: string } = {
+                id: `${v0.name.id || v0.name.en}: ${opt.id || opt.en}`,
+                en: `${v0.name.en || v0.name.id}: ${opt.en || opt.id}`,
+              };
+
+              const payload: VPrice = {
+                labels: [label],
                 price: priceValue,
                 stock: 0,
                 active: true,
-              });
+              };
+
+              const numericSize = Number(opt.en || opt.id);
+              if (!Number.isNaN(numericSize)) {
+                payload.size_eu = numericSize;
+              }
+
+              variantPricesPayload.push(payload);
             }
           });
         } else {
-          variantCombinations.forEach((combination) => {
-            const key = combination.join("-");
-            const priceValue = parseNumber(individualPrices[key]);
+          // Two or more dimensions -> individual pricing per combination
+          optionCombos.forEach((combination) => {
+            const enKey = combination.map((o) => o.en || o.id).join("-");
+            const priceValue = parseNumber(individualPrices[enKey]);
             if (priceValue != null) {
+              const labels = combination.map((opt, idx) => {
+                const v = valid[idx];
+                return {
+                  id: `${v.name.id || v.name.en}: ${opt.id || opt.en}`,
+                  en: `${v.name.en || v.name.id}: ${opt.en || opt.id}`,
+                };
+              });
               variantPricesPayload.push({
-                labels: combination,
+                labels,
                 price: priceValue,
                 stock: 0,
                 active: true,
@@ -252,14 +309,18 @@ if (seoDesc_en) fd.append("seo_description[en]", seoDesc_en);
             }
           });
         }
-  
+
         variantPricesPayload.forEach((vp, i) => {
           vp.labels.forEach((label, j) => {
-            fd.append(`variant_prices[${i}][labels][${j}]`, label);
+            fd.append(`variant_prices[${i}][labels][${j}][id]`, label.id);
+            fd.append(`variant_prices[${i}][labels][${j}][en]`, label.en);
           });
           fd.append(`variant_prices[${i}][price]`, String(vp.price));
           fd.append(`variant_prices[${i}][stock]`, String(vp.stock));
           fd.append(`variant_prices[${i}][active]`, vp.active ? "1" : "0");
+          if (vp.size_eu != null) {
+            fd.append(`variant_prices[${i}][size_eu]`, String(vp.size_eu));
+          }
         });
       }
  
@@ -363,23 +424,42 @@ if (seoDesc_en) fd.append("seo_description[en]", seoDesc_en);
 
     const handleAddVariant = () => {
         if (variants.length >= 3) return;
-        const newVariant: Variant = { id: variants.length + 1, name: "", options: [""] };
+        const newVariant: Variant = {
+            id: variants.length + 1,
+            name: { id: "", en: "" },
+            options: [{ id: "", en: "" }],
+        };
         setVariants((prev) => [...prev, newVariant]);
     };
 
-    const handleVariantNameChange = (id: number, name: string) => {
-        setVariants((prev) => prev.map((v) => (v.id === id ? { ...v, name } : v)));
+    const handleVariantNameChange = (id: number, value: string, lang: "id" | "en") => {
+        setVariants((prev) =>
+            prev.map((v) =>
+                v.id === id ? { ...v, name: { ...v.name, [lang]: value } } : v
+            )
+        );
     };
 
-    const handleOptionChange = (variantId: number, optionIndex: number, value: string) => {
+    const handleOptionChange = (
+        variantId: number,
+        optionIndex: number,
+        value: string,
+        lang: "id" | "en"
+    ) => {
         setVariants((prev) =>
             prev.map((variant) => {
                 if (variant.id !== variantId) return variant;
-                const newOptions = [...variant.options];
-                newOptions[optionIndex] = value;
-                // sisakan 1 opsi kosong di akhir
-                if (!newOptions.some((opt) => opt.trim() === "")) newOptions.push("");
-                return { ...variant, options: newOptions };
+                const newOptions = variant.options.map((o, i) =>
+                    i === optionIndex ? { ...o, [lang]: value } : o
+                );
+                // ensure 1 empty option at the end
+                const hasEmpty = newOptions.some(
+                    (opt) => (opt.id || opt.en).trim() === ""
+                );
+                const finalOptions = hasEmpty
+                    ? newOptions
+                    : [...newOptions, { id: "", en: "" }];
+                return { ...variant, options: finalOptions };
             })
         );
     };
@@ -389,7 +469,7 @@ if (seoDesc_en) fd.append("seo_description[en]", seoDesc_en);
             prev.map((variant) => {
                 if (variant.id !== variantId) return variant;
                 const newOptions = variant.options.filter((_, i) => i !== optionIndex);
-                if (!newOptions.some((opt) => opt.trim() === "")) newOptions.push("");
+                if (!newOptions.some((opt) => (opt.id || opt.en).trim() === "")) newOptions.push({ id: "", en: "" });
                 return { ...variant, options: newOptions };
             })
         );
@@ -405,7 +485,11 @@ if (seoDesc_en) fd.append("seo_description[en]", seoDesc_en);
 
     // ── Helpers untuk varian valid
     const getValidVariants = useMemo(
-        () => () => variants.filter((v) => v.options.some((opt) => opt.trim() !== "")),
+        () =>
+            () =>
+                variants.filter((v) =>
+                    v.options.some((opt) => (opt.id || opt.en).trim() !== "")
+                ),
         [variants]
     );
 
@@ -425,7 +509,9 @@ if (seoDesc_en) fd.append("seo_description[en]", seoDesc_en);
 
         const combinations: string[][] = [[]];
         validVariants.forEach((variant) => {
-            const opts = variant.options.filter((o) => o.trim() !== "");
+            const opts = variant.options
+                .filter((o) => (o.id || o.en).trim() !== "")
+                .map((o) => (language === "id" ? o.id || o.en : o.en || o.id));
             const next: string[][] = [];
             combinations.forEach((c) => opts.forEach((o) => next.push([...c, o])));
             combinations.length = 0;
@@ -692,15 +778,15 @@ if (seoDesc_en) fd.append("seo_description[en]", seoDesc_en);
                                 <div className="space-y-4 mb-8">
                                     {variants.map((variant, variantIndex) => (
                                         <div key={variant.id} className="border border-gray-200 rounded-lg p-4 bg-gray-50">
-                                            <div className="flex items-center justify-between mb-4">
+                                <div className="flex items-center justify-between mb-4">
                                                 <div className="flex items-center gap-3">
                                                     <span className="text-sm font-medium text-gray-700">Variant {variantIndex + 1}</span>
                                                     <input
                                                         type="text"
-                                                        value={variant.name}
-                                                        onChange={(e) => handleVariantNameChange(variant.id, e.target.value)}
+                                                        value={language === "id" ? (variant.name.id || "") : (variant.name.en || "")}
+                                                        onChange={(e) => handleVariantNameChange(variant.id, e.target.value, language)}
                                                         className="px-3 py-1 border border-gray-300 rounded text-sm text-black bg-white"
-                                                        placeholder="Variant name (e.g., Bahan, Warna)"
+                                                        placeholder={language === "id" ? "Nama varian (Indonesia)" : "Variant name (English)"}
                                                     />
                                                 </div>
                                                 <button
@@ -719,12 +805,12 @@ if (seoDesc_en) fd.append("seo_description[en]", seoDesc_en);
                                                         <div key={optionIndex} className="flex items-center gap-1">
                                                             <input
                                                                 type="text"
-                                                                value={option}
-                                                                onChange={(e) => handleOptionChange(variant.id, optionIndex, e.target.value)}
+                                                                value={language === "id" ? (option.id || "") : (option.en || "")}
+                                                                onChange={(e) => handleOptionChange(variant.id, optionIndex, e.target.value, language)}
                                                                 className="px-3 py-1 border border-gray-300 rounded text-sm text-black bg-white w-24"
-                                                                placeholder={optionIndex === variant.options.length - 1 ? "Input here" : "Option"}
+                                                                placeholder={optionIndex === variant.options.length - 1 ? (language === "id" ? "Isi di sini" : "Input here") : "Option"}
                                                             />
-                                                            {variant.options.length > 1 && option.trim() !== "" && (
+                                                            {variant.options.length > 1 && ((option.id || option.en).trim() !== "") && (
                                                                 <button type="button"
                                                                     onClick={() => handleRemoveOption(variant.id, optionIndex)}
                                                                     className="text-red-500 hover:text-red-700 text-sm w-4 h-4 flex items-center justify-center">
@@ -740,7 +826,7 @@ if (seoDesc_en) fd.append("seo_description[en]", seoDesc_en);
                                 </div>
 
                                 {/* Product Variant Pricing */}
-                                {variants.some((v) => v.options.some((o) => o.trim() !== "")) && (
+                                {variants.some((v) => v.options.some((o) => (o.id || o.en).trim() !== "")) && (
                                     <div className="border-t border-gray-200 pt-6">
                                         <h3 className="text-lg font-semibold text-gray-900 mb-4">Product Variant</h3>
 
@@ -890,16 +976,23 @@ if (seoDesc_en) fd.append("seo_description[en]", seoDesc_en);
                                                                                     {combinations
                                                                                         .filter((c) => c[1] === secondOption)
                                                                                         .map((combination, idx) => {
-                                                                                            const key = combination.join("-");
-                                                                                            const thirdOption = combination[2];
+                                                                                             // Stable key based on EN values
+                                                                                             const valid = getValidVariants();
+                                                                                             const enParts = combination.map((val, pos) => {
+                                                                                               const v = valid[pos];
+                                                                                               const found = v?.options.find((o) => (o.en || o.id) === val || (o.id || o.en) === val);
+                                                                                               return found ? (found.en || found.id) : val;
+                                                                                             });
+                                                                                             const key = enParts.join("-");
+                                                                                             const thirdOption = combination[2];
                                                                                             return (
                                                                                                 <div key={`${key}-${idx}`} className="flex items-center gap-3 text-sm">
                                                                                                     <span className="w-24 text-gray-600">{thirdOption || "Price"}</span>
                                                                                                     <span className="text-gray-500">Rp</span>
                                                                                                     <input
                                                                                                         type="number"
-                                                                                                        value={individualPrices[key] || ""}
-                                                                                                        onChange={(e) => handleIndividualPriceChange(key, e.target.value)}
+                                                                                                         value={individualPrices[key] || ""}
+                                                                                                         onChange={(e) => handleIndividualPriceChange(key, e.target.value)}
                                                                                                         className="px-2 py-1 border border-gray-300 rounded text-sm text-black w-32"
                                                                                                         placeholder="0"
                                                                                                         min={0}

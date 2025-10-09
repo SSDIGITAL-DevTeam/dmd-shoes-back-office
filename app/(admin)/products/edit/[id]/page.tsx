@@ -6,7 +6,7 @@ import api from "@/lib/fetching";
 import { CreateButton, CancelButton } from "@/components/ui/ActionButton";
 import ToggleSwitch from "@/components/ui/ToggleSwitch";
 import AsyncSelect from "react-select/async";
-
+import ProductGalleryUpdate from "./_components/ProductGalleryUpdate";
 interface Gallery {
   id: number;
   image: string;
