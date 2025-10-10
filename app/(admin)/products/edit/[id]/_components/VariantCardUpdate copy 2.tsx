@@ -17,7 +17,7 @@ interface Variant {
 interface VariantCardProps {
   language: "id" | "en";
   variants: Variant[];
-  pricingType: "single" | "per_variant";
+  pricingType: "single" | "individual";
   groupPrices: { [group: string]: string };
   individualPrices: { [key: string]: string };
   validVariantCount: number;
@@ -128,9 +128,7 @@ export default function VariantCard({
                   <div key={optionIndex} className="flex items-center gap-1">
                     <input
                       type="text"
-                      value={
-                        language === "id" ? option.id || "" : option.en || ""
-                      }
+                      value={language === "id" ? option.id || "" : option.en || ""}
                       onChange={(e) =>
                         handleOptionChange(
                           variant.id,
@@ -148,7 +146,6 @@ export default function VariantCard({
                           : "Option"
                       }
                     />
-               
                     {variant.options.length > 1 &&
                       (option.id || option.en).trim() !== "" && (
                         <button
@@ -184,9 +181,7 @@ export default function VariantCard({
 
           {/* Pricing Type */}
           <div className="mb-6">
-            <h4 className="text-sm font-medium text-gray-700 mb-3">
-              Set Pricing
-            </h4>
+            <h4 className="text-sm font-medium text-gray-700 mb-3">Set Pricing</h4>
             <div className="space-y-3">
               <label className="flex items-center gap-3">
                 <input
@@ -209,83 +204,35 @@ export default function VariantCard({
                   type="radio"
                   name="pricingType"
                   value="individual"
-                  checked={pricingType === "single"}
+                  checked={pricingType === "individual"}
                   onChange={(e) =>
                     setPricingType(e.target.value as "single" | "individual")
                   }
                   className="text-blue-600"
                 />
-                <span className="text-sm text-gray-700">Set Individual Prices</span>
+                <span className="text-sm text-gray-700">
+                  Set Individual Prices
+                </span>
               </label>
             </div>
           </div>
-     
-          {/* Group Pricing (1D variant) */}
-          {pricingType === "single" && validVariantCount === 1 && (
-            <div className="space-y-4">
-              {Object.keys(groupedCombinations()).map((firstOption) => (
-                <div key={firstOption} className="border border-gray-200 rounded-lg">
-                  <div className="bg-gray-50 px-4 py-3 border-b flex items-center justify-between">
-                    <h5 className="font-medium text-gray-900">{firstOption}</h5>
-                    <button
-                      type="button"
-                      onClick={() => toggleGroup(firstOption)}
-                      className="text-gray-400 hover:text-gray-600"
-                    >
-                      <svg
-                        className={`w-4 h-4 transition-transform ${
-                          isGroupOpen(firstOption) ? "" : "rotate-180"
-                        }`}
-                        fill="none"
-                        stroke="currentColor"
-                        viewBox="0 0 24 24"
-                      >
-                        <path
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          strokeWidth={2}
-                          d="M19 9l-7 7-7-7"
-                        />
-                      </svg>
-                    </button>
-                  </div>
 
-                  {isGroupOpen(firstOption) && (
-                    <div className="p-4">
-                      <div className="flex items-center gap-3 text-sm">
-                        <span className="text-gray-600">Rp</span>
-                        <input
-                          type="number"
-                          value={groupPrices[firstOption] ?? ""}
-                          onChange={(e) =>
-                            setGroupPrices((prev) => ({
-                              ...prev,
-                              [firstOption]: e.target.value,
-                            }))
-                          }
-                          className="px-2 py-1 border border-gray-300 rounded text-sm text-black w-32"
-                          placeholder="0"
-                          min={0}
-                        />
-                      </div>
-                    </div>
-                  )}
-                </div>
-              ))}
-            </div>
-          )}
-        {JSON.stringify(groupedCombinations())}
-          {/* Combination Pricing (≥2D variant) */}
-          {pricingType === "per_variant" && (
-          //{pricingType === "per_variant" && validVariantCount >= 2 && (
-           
+          {/* ✅ Combined Pricing Section */}
+          {pricingType === "individual" && (
             <div className="space-y-4">
+              <div>
+                {validVariantCount === 1
+                  ? "Individual count 1"
+                  : "Individual di atas 2"}
+              </div>
+
               {Object.entries(groupedCombinations()).map(
                 ([firstOption, combinations]) => (
                   <div
                     key={firstOption}
                     className="border border-gray-200 rounded-lg"
                   >
+                    {/* Header */}
                     <div className="bg-gray-50 px-4 py-3 border-b flex items-center justify-between">
                       <h5 className="font-medium text-gray-900">{firstOption}</h5>
                       <button
@@ -311,79 +258,105 @@ export default function VariantCard({
                       </button>
                     </div>
 
+                    {/* Content */}
                     {isGroupOpen(firstOption) && (
                       <div className="p-4">
-                        {Array.from(new Set(combinations.map((c) => c[1])))
-                          .filter(Boolean)
-                          .map((secondOption) => (
-                            <div key={secondOption} className="mb-4">
-                              <div className="bg-gray-100 px-3 py-2 border rounded flex items-center justify-between">
-                                <h6 className="font-medium text-gray-800">
-                                  {secondOption}
-                                </h6>
-                                <button
-                                  type="button"
-                                  onClick={() =>
-                                    toggleSub(firstOption, String(secondOption))
-                                  }
-                                  className="text-gray-400 hover:text-gray-600"
-                                >
-                                  <svg
-                                    className={`w-4 h-4 transition-transform ${
-                                      isSubOpen(firstOption, String(secondOption))
-                                        ? ""
-                                        : "rotate-180"
-                                    }`}
-                                    fill="none"
-                                    stroke="currentColor"
-                                    viewBox="0 0 24 24"
-                                  >
-                                    <path
-                                      strokeLinecap="round"
-                                      strokeLinejoin="round"
-                                      strokeWidth={2}
-                                      d="M19 9l-7 7-7-7"
-                                    />
-                                  </svg>
-                                </button>
-                              </div>
+                        {/* 1D Variant */}
+                        {validVariantCount === 1 && (
+                          <div className="flex items-center gap-3 text-sm">
+                            <span className="text-gray-600">Rp</span>
+                            <input
+                              type="number"
+                              value={groupPrices[firstOption] ?? ""}
+                              onChange={(e) =>
+                                setGroupPrices((prev) => ({
+                                  ...prev,
+                                  [firstOption]: e.target.value,
+                                }))
+                              }
+                              className="px-2 py-1 border border-gray-300 rounded text-sm text-black w-32"
+                              placeholder="0"
+                              min={0}
+                            />
+                          </div>
+                        )}
 
-                              {isSubOpen(firstOption, String(secondOption)) && (
-                                <div className="mt-2 space-y-2">
-                                  {combinations
-                                    .filter((c) => c[1] === secondOption)
-                                    .map((combination, idx) => {
-                                      const key = combination.join("-");
-                                      const thirdOption = combination[2];
-                                      return (
-                                        <div
-                                          key={`${key}-${idx}`}
-                                          className="flex items-center gap-3 text-sm"
-                                        >
-                                          <span className="w-24 text-gray-600">
-                                            {thirdOption || "Price"}
-                                          </span>
-                                          <span className="text-gray-500">Rp</span>
-                                          <input
-                                            type="number"
-                                            value={individualPrices[key] || ""}
-                                            onChange={(e) =>
-                                              handleIndividualPriceChange(
-                                                key,
-                                                e.target.value
-                                              )
-                                            }
-                                            className="px-2 py-1 border border-gray-300 rounded text-sm text-black w-32"
-                                            placeholder="0"
-                                            min={0}
-                                          />
-                                        </div>
-                                      );
-                                    })}
+                        {/* Multi-D Variant */}
+                        {validVariantCount >= 2 &&
+                          Array.from(new Set(combinations.map((c) => c[1])))
+                            .filter(Boolean)
+                            .map((secondOption) => (
+                              <div key={secondOption} className="mb-4">
+                                <div className="bg-gray-100 px-3 py-2 border rounded flex items-center justify-between">
+                                  <h6 className="font-medium text-gray-800">
+                                    {secondOption}
+                                  </h6>
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      toggleSub(firstOption, String(secondOption))
+                                    }
+                                    className="text-gray-400 hover:text-gray-600"
+                                  >
+                                    <svg
+                                      className={`w-4 h-4 transition-transform ${
+                                        isSubOpen(
+                                          firstOption,
+                                          String(secondOption)
+                                        )
+                                          ? ""
+                                          : "rotate-180"
+                                      }`}
+                                      fill="none"
+                                      stroke="currentColor"
+                                      viewBox="0 0 24 24"
+                                    >
+                                      <path
+                                        strokeLinecap="round"
+                                        strokeLinejoin="round"
+                                        strokeWidth={2}
+                                        d="M19 9l-7 7-7-7"
+                                      />
+                                    </svg>
+                                  </button>
                                 </div>
-                              )}
-                            </div>
-                          ))}
+
+                                {isSubOpen(firstOption, String(secondOption)) && (
+                                  <div className="mt-2 space-y-2">
+                                    {combinations
+                                      .filter((c) => c[1] === secondOption)
+                                      .map((combination, idx) => {
+                                        const key = combination.join("-");
+                                        const thirdOption = combination[2];
+                                        return (
+                                          <div
+                                            key={`${key}-${idx}`}
+                                            className="flex items-center gap-3 text-sm"
+                                          >
+                                            <span className="w-24 text-gray-600">
+                                              {thirdOption || "Price"}
+                                            </span>
+                                            <span className="text-gray-500">Rp</span>
+                                            <input
+                                              type="number"
+                                              value={individualPrices[key] || ""}
+                                              onChange={(e) =>
+                                                handleIndividualPriceChange(
+                                                  key,
+                                                  e.target.value
+                                                )
+                                              }
+                                              className="px-2 py-1 border border-gray-300 rounded text-sm text-black w-32"
+                                              placeholder="0"
+                                              min={0}
+                                            />
+                                          </div>
+                                        );
+                                      })}
+                                  </div>
+                                )}
+                              </div>
+                            ))}
                       </div>
                     )}
                   </div>

@@ -1,5 +1,5 @@
 "use client";
-
+import { v7 as uuidv7 } from 'uuid';
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import api from "@/lib/fetching";
@@ -110,7 +110,7 @@ const labelText = (lbl: any) =>
         setLoading(true);
         const res = await api.get(`/products/${id}`);
         const data = (res as any).data?.data || {};
-
+       
         setFormData({
           name_id: data.name?.id || "",
           name_en: data.name?.en || "",
@@ -127,7 +127,7 @@ const labelText = (lbl: any) =>
           keyword_en: (typeof data.seo_keyword === 'object' ? data.seo_keyword?.en : data.seo_keyword) || "",
           seoDescription_id: (typeof data.seo_description === 'object' ? data.seo_description?.id : data.seo_description) || "",
           seoDescription_en: (typeof data.seo_description === 'object' ? data.seo_description?.en : data.seo_description) || "",
-          featured: !!data.status,
+          featured: !!data.featured,
         });
 
         setPricingType(data.pricing_mode || "single");
@@ -160,8 +160,12 @@ const labelText = (lbl: any) =>
           options: Array.isArray(v.options)
             ? v.options.map((o: any) => ({
                 // 👉 ambil dari o.value.{id|en}, bukan o.id (angka)
-                id: text(o.value?.id ?? o.value),
-                en: text(o.value?.en ?? o.value?.id ?? o.value),
+                id:o.id,
+                label:{
+                  id: text(o.value?.id ?? o.value),
+                  en: text(o.value?.en ?? o.value?.id ?? o.value),
+                }
+              
               }))
             : [],
         }))
@@ -238,7 +242,7 @@ const labelText = (lbl: any) =>
 
   const handleAddVariant = () => {
     if (variants.length >= 3) return;
-    const newVariant: Variant = { id: variants.length + 1, name: { id: "", en: "" }, options: [{ id: "", en: "" }] };
+    const newVariant: Variant = { id: variants.length + 1, name: { id: "", en: "" }, options: [{id:uuidv7(),label:{ id: "", en: "" }}] };
     setVariants((prev) => [...prev, newVariant]);
   };
 
@@ -246,15 +250,60 @@ const labelText = (lbl: any) =>
     setVariants((prev) => prev.map((v) => (v.id === vid ? { ...v, name: { ...v.name, [lang]: value } } : v)));
   };
 
-  const handleOptionChange = (variantId: number, optionIndex: number, value: string, lang: "id" | "en") => {
+  // const handleOptionChange = (variantId: number, optionIndex: number, value: string, lang: "id" | "en") => {
+  //   setVariants((prev) =>
+  //     prev.map((variant) => {
+  //       if (variant.id !== variantId) return variant;
+  //       const newOptions = variant.options.map((o, i) => (i === optionIndex ? { ...o, [lang]: value } : o));
+  //       // ensure 1 empty option at the end
+  //       const hasEmpty = newOptions.some((opt) => (opt.id || opt.en).trim() === "");
+  //       const finalOptions = hasEmpty ? newOptions : [...newOptions, { id: "", en: "" }];
+  //       return { ...variant, options: finalOptions };
+  //     })
+  //   );
+  // };
+
+  const handleOptionChange = (
+    variantId: number,
+    optionIndex: number,
+    value: string,
+    lang: string
+  ) => {
     setVariants((prev) =>
       prev.map((variant) => {
         if (variant.id !== variantId) return variant;
-        const newOptions = variant.options.map((o, i) => (i === optionIndex ? { ...o, [lang]: value } : o));
-        // ensure 1 empty option at the end
-        const hasEmpty = newOptions.some((opt) => (opt.id || opt.en).trim() === "");
-        const finalOptions = hasEmpty ? newOptions : [...newOptions, { id: "", en: "" }];
-        return { ...variant, options: finalOptions };
+  
+        // Update hanya teks label
+        const updatedOptions = variant.options.map((option, i) =>
+          i === optionIndex
+            ? {
+                ...option,
+                label: {
+                  ...option.label,
+                  [lang]: value,
+                },
+              }
+            : option
+        );
+  
+        return { ...variant, options: updatedOptions };
+      })
+    );
+  };
+  const handleOptionAdd = (variantId: number) => {
+    setVariants((prev) =>
+      prev.map((variant) => {
+        if (variant.id !== variantId) return variant;
+  
+        const newOption = {
+          id:uuidv7(),
+          label: { id: "", en: "" },
+        };
+  
+        return {
+          ...variant,
+          options: [...variant.options, newOption],
+        };
       })
     );
   };
@@ -264,7 +313,7 @@ const labelText = (lbl: any) =>
       prev.map((variant) => {
         if (variant.id !== variantId) return variant;
         const newOptions = variant.options.filter((_, i) => i !== optionIndex);
-        if (!newOptions.some((opt) => (opt.id || opt.en).trim() === "")) newOptions.push({ id: "", en: "" });
+        if (!newOptions.some((opt) => (opt?.label?.id || opt?.label?.en)?.trim() === "")) newOptions.push({ id: "", en: "" });
         return { ...variant, options: newOptions };
       })
     );
@@ -275,23 +324,42 @@ const labelText = (lbl: any) =>
   };
 
   const getValidVariants = useMemo(
-    () => () => variants.filter((v) => v.options.some((opt) => (opt?.id || opt?.en).trim() !== "")),
+    () => () =>
+      variants.filter((v) =>
+        v.options.some((opt) => {
+          const idLabel = opt?.label?.id?.trim?.() || "";
+          const enLabel = opt?.label?.en?.trim?.() || "";
+          return idLabel !== "" || enLabel !== "";
+        })
+      ),
     [variants]
   );
 
   const generateVariantCombinations = () => {
     const valids = getValidVariants();
-    if (valids.length === 0) return [] as string[][];
-    const combos: string[][] = [[]];
+    if (!valids.length) return [] as string[][];
+  
+    let combos: string[][] = [[]];
+  
     valids.forEach((variant) => {
-      const opts = variant.options
-        .filter((o) => (o.id || o.en).trim() !== "")
-        .map((o) => (activeLang === "id" ? o.id || o.en : o.en || o.id));
+      const opts = (variant.options || [])
+        .map((o) => {
+          const idLabel = o?.label?.id?.trim?.() || "";
+          const enLabel = o?.label?.en?.trim?.() || "";
+          return activeLang === "id" ? idLabel || enLabel : enLabel || idLabel;
+        })
+        .filter((label) => label !== ""); // pastikan tidak ada label kosong
+  
+      if (!opts.length) return; // skip jika varian tidak punya opsi valid
+  
       const next: string[][] = [];
-      combos.forEach((c) => opts.forEach((o) => next.push([...c, o])));
-      combos.length = 0;
-      combos.push(...next);
+      combos.forEach((combo) => {
+        opts.forEach((opt) => next.push([...combo, opt]));
+      });
+  
+      combos = next;
     });
+  
     return combos;
   };
 
@@ -357,8 +425,8 @@ const labelText = (lbl: any) =>
       if (formData.keyword_en) payload.append("seo_keyword[en]", formData.keyword_en.trim());
       if (formData.seoDescription_id) payload.append("seo_description[id]", formData.seoDescription_id.trim());
       if (formData.seoDescription_en) payload.append("seo_description[en]", formData.seoDescription_en.trim());
-      payload.append("status", String(formData.featured));
-
+      //payload.append("featured", formData.featured ? "1" : "0");
+      payload.append("featured", formData.featured ? "1" : "0");
       if (coverFile instanceof File) {
         payload.append("cover", coverFile);
       }
@@ -431,7 +499,7 @@ const labelText = (lbl: any) =>
         payload.append(`variant_prices[${i}][active]`, vp.active ? "1" : "0");
         if (vp.size_eu != null) payload.append(`variant_prices[${i}][size_eu]`, String(vp.size_eu));
       });
-
+     // alert(JSON.stringify(payload))
       await api.patch(`/products/${id}`, payload);
       setSuccessMessage("Produk berhasil diperbarui!");
       setTimeout(() => router.push("/products"), 800);
@@ -664,7 +732,7 @@ const labelText = (lbl: any) =>
             activeLang={activeLang}
           />
 
-                         <VariantCard
+                         <VariantCard 
   language={activeLang}
   variants={variants}
   pricingType={pricingType}
@@ -680,6 +748,7 @@ const labelText = (lbl: any) =>
   handleRemoveVariant={handleRemoveVariant}
   handleVariantNameChange={handleVariantNameChange}
   handleOptionChange={handleOptionChange}
+  handleOptionAdd={handleOptionAdd}
   handleRemoveOption={handleRemoveOption}
   setPricingType={setPricingType}
   setGroupPrices={setGroupPrices}
@@ -729,11 +798,11 @@ const labelText = (lbl: any) =>
           
         </div>
       </div>
-      {JSON.stringify(variants)}
+      {/* {JSON.stringify(variants)}
       <div>
         Individual Price
         {JSON.stringify(individualPrices)}
-      </div>
+      </div> */}
    
 
     </div>

@@ -56,7 +56,7 @@ export default function CreateProductPage() {
     const [galleries, setGalleries] = useState<Gallery[]>([]);
     const [variants, setVariants] = useState<Variant[]>([]);
 
-    const [pricingType, setPricingType] = useState<"single" | "individual">("individual");
+    const [pricingType, setPricingType] = useState<"single" | "individual">("single");
     const [singlePrice, setSinglePrice] = useState("");
 
     // ── NEW: harga per kelompok (satu dimensi varian saja)

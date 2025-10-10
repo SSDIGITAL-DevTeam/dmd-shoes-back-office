@@ -252,6 +252,7 @@ export default function ProductsPage() {
         status: resolveStatus(item.status),
         categoryName: item.category_name || "-",
         coverUrl: toImageUrl(item.cover_url ?? item.cover ?? null),
+        galery: item.gallery,
       };  
     });
   }, [products, currencyFormatter, numberFormatter]);
@@ -493,14 +494,34 @@ export default function ProductsPage() {
                         </td>
                         <td className="px-3 py-4 sm:px-6">
                           <div className="h-12 w-12 overflow-hidden rounded bg-gray-200">
-                            <img
-                              src={product.coverUrl}
-                              alt={`Cover ${product.name}`}
-                              className="h-full w-full object-cover"
-                              onError={(event) => {
-                                event.currentTarget.src = PLACEHOLDER;
-                              }}
-                            />
+                            {/* {JSON.stringify(product?.galery[0]?.url)} */}
+                            {product?.galery?.[0]?.url ? (
+                                <img
+                                  src={product.galery[0].url}
+                                  alt={`Cover ${product?.name || "Product"}`}
+                                  className="h-full w-full object-cover"
+                                  onError={(event) => {
+                                    event.currentTarget.src = PLACEHOLDER; // opsional fallback
+                                  }}
+                                />
+                              ) : (
+                                <div className="flex h-full w-full items-center justify-center bg-gray-100">
+                                  <svg
+                                    xmlns="http://www.w3.org/2000/svg"
+                                    viewBox="0 0 24 24"
+                                    fill="none"
+                                    stroke="currentColor"
+                                    strokeWidth="1.5"
+                                    className="h-16 w-16 text-gray-400"
+                                  >
+                                    <path
+                                      strokeLinecap="round"
+                                      strokeLinejoin="round"
+                                      d="M3 5a2 2 0 012-2h14a2 2 0 012 2v14a2 2 0 01-2 2H5a2 2 0 01-2-2V5zm3 12l3.086-3.086a2 2 0 012.828 0L15 17m-2-7a2 2 0 11-4 0 2 2 0 014 0z"
+                                    />
+                                  </svg>
+                                </div>
+                              )}
                           </div>
                         </td>
                         <td className="px-3 py-4 sm:px-6">

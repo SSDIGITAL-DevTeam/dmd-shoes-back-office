@@ -407,11 +407,8 @@ export default function VariantCard({
                             {variants[2].options.map((thirdOpt, k) => {
                               const thirdLabel =
                                 language === "id"
-                                  ? thirdOpt?.label?.id ||thirdOpt.id 
-                                  : thirdOpt?.label?.en || thirdOpt.en  ;
-
-                                  // ? thirdOpt?.label?.id ||"Please input" 
-                                  // : thirdOpt?.label?.en || thirdOpt.id;
+                                  ? thirdOpt?.label?.id || thirdOpt.id
+                                  : thirdOpt?.label?.en || thirdOpt.id;
                               const key = `${firstOpt.id}-${secondOpt.id}-${thirdOpt.id}`;
 
                               return (
@@ -425,13 +422,13 @@ export default function VariantCard({
                                   <span className="text-gray-500">Rp</span>
                                   <input
                                     type="number"
-                                    // value={individualPrices[key] || ""}
-                                    // onChange={(e) =>
-                                    //   handleIndividualPriceChange(
-                                    //     key,
-                                    //     e.target.value
-                                    //   )
-                                    // }
+                                    value={individualPrices[key] || ""}
+                                    onChange={(e) =>
+                                      handleIndividualPriceChange(
+                                        key,
+                                        e.target.value
+                                      )
+                                    }
                                     className="px-2 py-1 border border-gray-300 rounded text-sm text-black w-32"
                                     placeholder="0"
                                     min={0}
@@ -456,7 +453,159 @@ export default function VariantCard({
 
 
           {/* ✅ Combined Pricing Section */}
-        
+          {pricingType === "individual" && (
+            <div className="space-y-4">
+              <div>
+                {validVariantCount === 1
+                  ? "Individual count 1"
+                  : "Individual di atas 2"}
+              </div>
+
+              {Object.entries(groupedCombinations()).map(
+                ([firstOption, combinations]) => (
+                  <div
+                    key={firstOption}
+                    className="border border-gray-200 rounded-lg"
+                  >
+                    {/* Header */}
+                    <div className="bg-gray-50 px-4 py-3 border-b flex items-center justify-between">
+                      <h5 className="font-medium text-gray-900">{firstOption}</h5>
+                      <button
+                        type="button"
+                        onClick={() => toggleGroup(firstOption)}
+                        className="text-gray-400 hover:text-gray-600"
+                      >
+                        <svg
+                          className={`w-4 h-4 transition-transform ${
+                            isGroupOpen(firstOption) ? "" : "rotate-180"
+                          }`}
+                          fill="none"
+                          stroke="currentColor"
+                          viewBox="0 0 24 24"
+                        >
+                          <path
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            strokeWidth={2}
+                            d="M19 9l-7 7-7-7"
+                          />
+                        </svg>
+                      </button>
+                    </div>
+
+                    {/* Content */}
+                    {isGroupOpen(firstOption) && (
+                      <div className="p-4">
+                        {/* 1D Variant */}
+                        {validVariantCount === 1 && (
+                          <div className="flex items-center gap-3 text-sm">
+                            <span className="text-gray-600">Rp</span>
+                            <input
+                              type="number"
+                              value={groupPrices[firstOption] ?? ""}
+                              onChange={(e) =>
+                                setGroupPrices((prev) => ({
+                                  ...prev,
+                                  [firstOption]: e.target.value,
+                                }))
+                              }
+                              className="px-2 py-1 border border-gray-300 rounded text-sm text-black w-32"
+                              placeholder="0"
+                              min={0}
+                            />
+                          </div>
+                        )}
+
+                        {/* Multi-D Variant */}
+                        {validVariantCount >= 2 &&
+                          Array.from(new Set(combinations.map((c) => c[1])))
+                            .filter(Boolean)
+                            .map((secondOption) => (
+                              <div key={secondOption} className="mb-4">
+                                <div className="bg-gray-100 px-3 py-2 border rounded flex items-center justify-between">
+                                  <h6 className="font-medium text-gray-800">
+                                    {secondOption}
+                                  </h6>
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      toggleSub(firstOption, String(secondOption))
+                                    }
+                                    className="text-gray-400 hover:text-gray-600"
+                                  >
+                                    <svg
+                                      className={`w-4 h-4 transition-transform ${
+                                        isSubOpen(
+                                          firstOption,
+                                          String(secondOption)
+                                        )
+                                          ? ""
+                                          : "rotate-180"
+                                      }`}
+                                      fill="none"
+                                      stroke="currentColor"
+                                      viewBox="0 0 24 24"
+                                    >
+                                      <path
+                                        strokeLinecap="round"
+                                        strokeLinejoin="round"
+                                        strokeWidth={2}
+                                        d="M19 9l-7 7-7-7"
+                                      />
+                                    </svg>
+                                  </button>
+                                </div>
+
+                                {isSubOpen(firstOption, String(secondOption)) && (
+                                  <div className="mt-2 space-y-2">
+                                    {combinations
+                                      .filter((c) => c[1] === secondOption)
+                                      .map((combination, idx) => {
+                                        const key = combination.join("-");
+                                        const thirdOption = combination[2];
+                                        return (
+                                         
+                                            <div
+                                              key={`${key}-${idx}`}
+                                              className="flex items-center gap-3 text-sm"
+                                            >
+                                              <span className="w-24 text-gray-600">
+                                                {thirdOption || "Price"}
+                                              </span>
+                                              <span className="text-gray-500">Rp</span>
+                                              <input
+                                                type="number"
+                                                value={individualPrices[key] || ""}
+                                                onChange={(e) =>
+                                                  handleIndividualPriceChange(
+                                                    key,
+                                                    e.target.value
+                                                  )
+                                                }
+                                                className="px-2 py-1 border border-gray-300 rounded text-sm text-black w-32"
+                                                placeholder="0"
+                                                min={0}
+                                              />
+
+                                              <input type="text" value={""}/>
+                                            </div>
+
+                                            
+
+                                       
+                                        );
+                                      })}
+                                  </div>
+                                )}
+                              </div>
+                            ))}
+                      </div>
+                    )}
+                  </div>
+                )
+              )}
+            </div>
+          )}
         </div>
       )}
       <div className="mt-10">
