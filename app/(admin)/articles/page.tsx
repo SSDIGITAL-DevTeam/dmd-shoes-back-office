@@ -1,29 +1,70 @@
 "use client";
 
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { NewNounButton } from "@/components/ui/AddButton";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import ToggleSwitch from "@/components/ui/ToggleSwitch";
 import { EditButton } from "@/components/ui/EditIcon";
 import { DeleteButton } from "@/components/ui/DeleteIcon";
 import { Pagination } from "@/components/layout/Pagination";
+import api from "@/lib/fetching";
+import { Toast } from "@/components/ui/Toast";
 
-// --- Sample data
-const sampleArticles = [
-  { id: 1, cover: "/api/placeholder/50/50", title: "Cara Memilih Sepatu Yang Cocok Dengan Vibes Kamu", author: "Admin", status: "publish" as const, published: true },
-  { id: 2, cover: "/api/placeholder/50/50", title: "Cara Memilih Sepatu Yang Cocok Dengan Vibes Kamu", author: "Admin", status: "draft" as const, published: false },
-  { id: 3, cover: "/api/placeholder/50/50", title: "Cara Memilih Sepatu Yang Cocok Dengan Vibes Kamu", author: "Admin", status: "draft" as const, published: false },
-];
+type ArticleItem = {
+  id: number;
+  cover_url?: string;
+  author_name?: string;
+  status: "publish" | "draft" | string;
+  published: boolean;
+  title_text?: string;
+};
+
+type ArticlesResponse = {
+  status: string;
+  message?: string;
+  data: ArticleItem[];
+  meta: { current_page: number; per_page: number; total: number; last_page: number };
+};
 
 export default function ArticlesPage() {
-  const [articles, setArticles] = useState(sampleArticles);
+  const [rows, setRows] = useState<ArticleItem[]>([]);
   const [activeFilter, setActiveFilter] = useState<"All" | "Publish" | "Draft">("All");
   const [query, setQuery] = useState("");
   const [currentPage, setCurrentPage] = useState(1);
-  const [itemsPerPage, setItemsPerPage] = useState(3);
+  const [itemsPerPage, setItemsPerPage] = useState(10);
+  const [totalItems, setTotalItems] = useState(0);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [toast, setToast] = useState<{ show: boolean; msg: string; variant?: "success" | "error" }>({ show: false, msg: "" });
+
+  const fetchArticles = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const { data } = await api.get<ArticlesResponse>("/articles", {
+        params: {
+          page: currentPage,
+          per_page: itemsPerPage,
+        },
+      });
+      setRows(data.data || []);
+      setTotalItems(data.meta?.total ?? 0);
+    } catch (e: any) {
+      setError(e?.message || "Gagal memuat artikel");
+      setRows([]);
+      setTotalItems(0);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchArticles();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentPage, itemsPerPage, activeFilter, query]);
 
   const handleTogglePublish = (id: number) => {
-    setArticles(prev =>
+    setRows(prev =>
       prev.map(a =>
         a.id === id
           ? { ...a, published: !a.published, status: !a.published ? "publish" : "draft" }
@@ -35,34 +76,31 @@ export default function ArticlesPage() {
   const handleEdit = (id: number) => {
     window.location.href = `/articles/edit/${id}`;
   };
-  const handleDelete = (id: number) => console.log("Delete article:", id);
+  const handleDelete = async (id: number) => {
+    const ok = window.confirm("Hapus artikel ini?");
+    if (!ok) return;
+    try {
+      await api.delete(`/articles/${id}`);
+      setToast({ show: true, msg: "Artikel berhasil dihapus", variant: "success" });
+      // If last item removed on the page and not on first page, go back a page
+      if (rows.length === 1 && currentPage > 1) {
+        setCurrentPage(currentPage - 1);
+      } else {
+        fetchArticles();
+      }
+    } catch (e: any) {
+      setToast({ show: true, msg: e?.message || "Gagal menghapus artikel", variant: "error" });
+    }
+  };
   const handleNewArticle = () => {
     window.location.href = '/articles/add';
   };
-
-  // filter + search
-  const filteredArticles = useMemo(() => {
-    const byFilter =
-      activeFilter === "All"
-        ? articles
-        : articles.filter(a => (activeFilter === "Publish" ? a.status === "publish" : a.status === "draft"));
-    const q = query.trim().toLowerCase();
-    return q ? byFilter.filter(a => a.title.toLowerCase().includes(q) || a.author.toLowerCase().includes(q)) : byFilter;
-  }, [articles, activeFilter, query]);
-
-  const totalItems = filteredArticles.length;
-  const startIndex = (currentPage - 1) * itemsPerPage;
-  const endIndex = startIndex + itemsPerPage;
-  const currentArticles = filteredArticles.slice(startIndex, endIndex);
 
   const handlePageChange = (p: number) => setCurrentPage(p);
   const handlePageSizeChange = (n: number) => {
     setItemsPerPage(n);
     setCurrentPage(1);
   };
-
-  // reset ke page 1 saat filter/search berubah
-  React.useEffect(() => setCurrentPage(1), [activeFilter, query]);
 
   return (
     <div className="min-h-full">
@@ -143,6 +181,12 @@ export default function ArticlesPage() {
               </div>
             </div>
 
+            {error && (
+              <div className="mx-4 my-3 rounded-md border border-red-200 bg-red-50 px-4 py-2 text-sm text-red-700" role="alert">
+                {error}
+              </div>
+            )}
+
             {/* Table */}
             <div className="overflow-x-auto">
               <table className="min-w-full divide-y divide-gray-200">
@@ -182,46 +226,80 @@ export default function ArticlesPage() {
                 </thead>
 
                 <tbody className="bg-white divide-y divide-gray-200">
-                  {currentArticles.map(article => (
-                    <tr key={article.id} className="hover:bg-gray-50">
-                      <td className="px-3 sm:px-6 py-4">
-                        <input type="checkbox" className="rounded border-gray-300" />
-                      </td>
-                      <td className="px-3 sm:px-6 py-4">
-                        <div className="h-10 w-10 sm:h-12 sm:w-12 overflow-hidden rounded bg-gray-200">
-                          <img
-                            src={article.cover}
-                            alt="cover"
-                            className="h-full w-full object-cover"
-                            onError={e => {
-                              e.currentTarget.src =
-                                "data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNDgiIGhlaWdodD0iNDgiIHZpZXdCb3g9IjAgMCA0OCA0OCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iNDgiIGhlaWdodD0iNDgiIGZpbGw9IiNGM0Y0RjYiLz48cGF0aCBkPSJNMjQgMzZDMzAuNjI3NCAzNiAzNiAzMC42Mjc0IDM2IDI0QzM2IDE3LjM3MjYgMzAuNjI3NCAxMiAyNCAxMkMxNy4zNzI2IDEyIDEyIDE3LjM3MjYgMTIgMjRDMTIgMzAuNjI3NiAxNy4zNzI2IDM2IDI0IDM2WiIgc3Ryb2tlPSIjOUNBM0FGIiBzdHJva2Utd2lkdGg9IjIiLz48cGF0aCBkPSJNMjQgMjhDMjYuMjA5MSAyOCAyOCAyNi4yMDkxIDI4IDI0QzI4IDIxLjc5MDkgMjYuMjA5MSAyMCAyNCAyMEMyMS43OTA5IDIwIDIwIDIxLjc5MDkgMjAgMjRDMjAgMjYuMjA5MSAyMS43OTA5IDI4IDI0IDI4WiIgc3Ryb2tlPSIjOUNBM0FGIiBzdHJva2Utd2lkdGg9IjIiLz48L3N2Zz4=";
-                            }}
-                          />
-                        </div>
-                      </td>
-                      <td className="px-3 sm:px-6 py-4">
-                        <div className="max-w-xs truncate text-sm font-medium text-gray-900">
-                          {article.title}
-                        </div>
-                      </td>
-                      <td className="hidden sm:table-cell px-3 sm:px-6 py-4">
-                        <div className="text-sm text-gray-900">{article.author}</div>
-                      </td>
-                      <td className="px-3 sm:px-6 py-4">
-                        <StatusBadge status={article.status} />
-                      </td>
-                      <td className="px-3 sm:px-6 py-4">
-                        <ToggleSwitch checked={article.published} onChange={() => handleTogglePublish(article.id)} />
-                      </td>
-                      <td className="px-3 sm:px-6 py-4">
-                        <div className="flex items-center gap-3 sm:gap-4">
-                          <EditButton onClick={() => handleEdit(article.id)} />
-                          <DeleteButton onClick={() => handleDelete(article.id)} />
-                        </div>
+                  {loading ? (
+                    Array.from({ length: Math.min(itemsPerPage, 10) }).map((_, idx) => (
+                      <tr key={`sk-${idx}`} className="animate-pulse">
+                        <td className="px-3 sm:px-6 py-4">
+                          <div className="h-4 w-4 rounded bg-gray-200" />
+                        </td>
+                        <td className="px-3 sm:px-6 py-4">
+                          <div className="h-12 w-12 rounded bg-gray-200" />
+                        </td>
+                        <td className="px-3 sm:px-6 py-4">
+                          <div className="h-4 w-56 rounded bg-gray-200" />
+                        </td>
+                        <td className="hidden sm:table-cell px-3 sm:px-6 py-4">
+                          <div className="h-4 w-32 rounded bg-gray-200" />
+                        </td>
+                        <td className="px-3 sm:px-6 py-4">
+                          <div className="h-6 w-20 rounded bg-gray-200" />
+                        </td>
+                        <td className="px-3 sm:px-6 py-4">
+                          <div className="h-6 w-16 rounded bg-gray-200" />
+                        </td>
+                        <td className="px-3 sm:px-6 py-4">
+                          <div className="h-6 w-20 rounded bg-gray-200" />
+                        </td>
+                      </tr>
+                    ))
+                  ) : rows.length === 0 ? (
+                    <tr>
+                      <td colSpan={7} className="px-3 sm:px-6 py-10 text-center text-gray-500">
+                        Tidak ada artikel
                       </td>
                     </tr>
-                  ))}
+                  ) : (
+                    rows.map(article => (
+                      <tr key={article.id} className="hover:bg-gray-50">
+                        <td className="px-3 sm:px-6 py-4">
+                          <input type="checkbox" className="rounded border-gray-300" />
+                        </td>
+                        <td className="px-3 sm:px-6 py-4">
+                          <div className="h-10 w-10 sm:h-12 sm:w-12 overflow-hidden rounded bg-gray-200">
+                            <img
+                              src={article.cover_url || "/api/placeholder/50/50"}
+                              alt="cover"
+                              className="h-full w-full object-cover"
+                              onError={e => {
+                                e.currentTarget.src =
+                                  "data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNDgiIGhlaWdodD0iNDgiIHZpZXdCb3g9IjAgMCA0OCA0OCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iNDgiIGhlaWdodD0iNDgiIGZpbGw9IiNGM0Y0RjYiLz48cGF0aCBkPSJNMjQgMzZDMzAuNjI3NCAzNiAzNiAzMC42Mjc0IDM2IDI0QzM2IDE3LjM3MjYgMzAuNjI3NCAxMiAyNCAxMkMxNy4zNzI2IDEyIDEyIDE3LjM3MjYgMTIgMjRDMTIgMzAuNjI3NiAxNy4zNzI2IDM2IDI0IDM2WiIgc3Ryb2tlPSIjOUNBM0FGIiBzdHJva2Utd2lkdGg9IjIiLz48cGF0aCBkPSJNMjQgMjhDMjYuMjA5MSAyOCAyOCAyNi4yMDkxIDI4IDI0QzI4IDIxLjc5MDkgMjYuMjA5MSAyMCAyNCAyMEMyMS43OTA5IDIwIDIwIDIxLjc5MDkgMjAgMjRDMjAgMjYuMjA5MSAyMS43OTA5IDI4IDI0IDI4WiIgc3Ryb2tlPSIjOUNBM0FGIiBzdHJva2Utd2lkdGg9IjIiLz48L3N2Zz4=";
+                              }}
+                            />
+                          </div>
+                        </td>
+                        <td className="px-3 sm:px-6 py-4">
+                          <div className="max-w-xs truncate text-sm font-medium text-gray-900">
+                            {article.title_text}
+                          </div>
+                        </td>
+                        <td className="hidden sm:table-cell px-3 sm:px-6 py-4">
+                          <div className="text-sm text-gray-900">{article.author_name}</div>
+                        </td>
+                        <td className="px-3 sm:px-6 py-4">
+                          <StatusBadge status={article.status as any} />
+                        </td>
+                        <td className="px-3 sm:px-6 py-4">
+                          <ToggleSwitch checked={!!article.published} onChange={() => handleTogglePublish(article.id)} />
+                        </td>
+                        <td className="px-3 sm:px-6 py-4">
+                          <div className="flex items-center gap-3 sm:gap-4">
+                            <EditButton onClick={() => handleEdit(article.id)} />
+                            <DeleteButton onClick={() => handleDelete(article.id)} />
+                          </div>
+                        </td>
+                      </tr>
+                    ))
+                  )}
                 </tbody>
               </table>
             </div>
@@ -234,12 +312,13 @@ export default function ArticlesPage() {
                 pageSize={itemsPerPage}
                 onPageChange={handlePageChange}
                 onPageSizeChange={handlePageSizeChange}
-                pageSizeOptions={[3, 10, 25, 50]}
+                pageSizeOptions={[10, 25, 50]}
               />
             </div>
           </div>
         </div>
       </div>
+      <Toast show={toast.show} message={toast.msg} variant={toast.variant} onClose={() => setToast({ show: false, msg: "" })} />
     </div>
   );
 }

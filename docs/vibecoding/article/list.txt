@@ -1,0 +1,33 @@
+coba buat tampilan di dmd-back-office 
+di route /customers buat tampilan sama  sperti gambar namun
+fetching ke api  dengan  {NEXT_PUBLIC_API_URL}/customers dengan response api
+{
+    "status": "success",
+    "message": "Customers fetched",
+    "data": [
+        {
+            "id": 2,
+            "full_name": "Kyuto",
+            "email": "kyuto@example.com",
+            "whatsapp_number": "6281234567891"
+        },
+        {
+            "id": 3,
+            "full_name": "Kyuto",
+            "email": "test@example.com",
+            "whatsapp_number": "6281234567892"
+        },
+        {
+            "id": 4,
+            "full_name": "test2",
+            "email": "test2@example.com",
+            "whatsapp_number": "+6285207883711"
+        }
+    ],
+    "meta": {
+        "current_page": 1,
+        "per_page": 10,
+        "total": 3,
+        "last_page": 1
+    }
+} 
