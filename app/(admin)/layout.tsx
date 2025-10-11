@@ -43,12 +43,12 @@ export default function DashboardLayout({
         }
       } catch (e: any) {
         // clear cookie and redirect to login
-        // deleteCookieUtil('access_token');
-        // clearAuth();
-        // if (!cancelled) {
-        //   setError(e?.message || 'Unauthorized');
-        //   router.replace('/auth/login');
-        // }
+        deleteCookieUtil('access_token');
+        clearAuth();
+        if (!cancelled) {
+          setError(e?.message || 'Unauthorized');
+          router.replace('/auth/login');
+        }
       }
     })();
     return () => {
