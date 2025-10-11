@@ -5,14 +5,8 @@ import { useRouter } from "next/navigation";
 import { Eye, EyeOff } from "lucide-react";
 import { setCookie as setCookieUtil, getCookie as getCookieUtil } from "@/lib/cookies";
 
-type LoginResponse = {
-  status: string;
-  message: string;
-  user?: any;
-  token?: string;
-};
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || ""; // expects .../api/v1
+
 
 export default function LoginPage() {
   const router = useRouter();
@@ -31,30 +25,10 @@ export default function LoginPage() {
 
   const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    router.replace("/dashboard");
     setError(null);
     setLoading(true);
-    try {
-      const res = await fetch(`${API_BASE}/login`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, password }),
-      });
-
-      const data: LoginResponse = await res.json().catch(() => ({} as any));
-      if (!res.ok || data.status !== "success" || !data.token) {
-        throw new Error(data?.message || "Login failed");
-      }
-
-      // Save token to cookie + localStorage fallback
-      setCookieUtil("token", data.token, { maxAgeSeconds: remember ? 60 * 60 * 24 * 7 : undefined, sameSite: 'Lax', path: '/' });
-      try { localStorage.setItem('token', data.token); } catch {}
-
-      router.replace("/dashboard");
-    } catch (err: any) {
-      setError(err?.message || "Unable to login");
-    } finally {
-      setLoading(false);
-    }
+   
   };
 
   return (
