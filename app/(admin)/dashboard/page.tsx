@@ -1,14 +1,58 @@
 "use client";
 
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { Pagination } from "@/components/layout/Pagination";
+import api from "@/lib/fetching";
 
 type StatsCardProps = {
   title: string;
   value: string | number;
   subtitle: string;
   href?: string;
+};
+
+type DashboardSummary = {
+  products?: {
+    total?: number;
+    active?: number;
+    inactive?: number;
+  };
+  articles?: {
+    total?: number;
+    publish?: number;
+    draft?: number;
+  };
+  categories?: {
+    total?: number;
+  };
+  customers?: {
+    total?: number;
+  };
+};
+
+type DashboardCustomer = {
+  id: number;
+  full_name: string;
+  email: string;
+  whatsapp_number: string | null;
+};
+
+type DashboardCustomersMeta = {
+  current_page: number;
+  per_page: number;
+  total: number;
+  last_page: number;
+};
+
+type DashboardResponse = {
+  status: string;
+  message: string;
+  data: DashboardSummary;
+  customers: {
+    items: DashboardCustomer[];
+    meta: DashboardCustomersMeta;
+  };
 };
 
 function StatsCard({ title, value, subtitle, href }: StatsCardProps) {
@@ -31,34 +75,125 @@ function StatsCard({ title, value, subtitle, href }: StatsCardProps) {
 }
 
 export default function DashboardPage() {
-  // Customers preview (mirroring Customers page style)
-  const sampleCustomers = [
-    { id: 1, fullName: "Anakin Skywalker", email: "anakin@gmail.com", whatsappNumber: "+62-836-2839-1293" },
-    { id: 2, fullName: "Anakin Skywalker", email: "anakin@gmail.com", whatsappNumber: "+62-836-2839-1293" },
-    { id: 3, fullName: "Anakin Skywalker", email: "anakin@gmail.com", whatsappNumber: "-" },
-    { id: 4, fullName: "Luke Skywalker", email: "luke@gmail.com", whatsappNumber: "+62-836-2839-1294" },
-    { id: 5, fullName: "Leia Organa", email: "leia@gmail.com", whatsappNumber: "+62-836-2839-1295" },
-    { id: 6, fullName: "Han Solo", email: "han@gmail.com", whatsappNumber: "-" },
-    { id: 7, fullName: "Obi-Wan Kenobi", email: "obiwan@gmail.com", whatsappNumber: "+62-836-2839-1296" },
-  ];
-
+  const [summary, setSummary] = useState<DashboardSummary | null>(null);
+  const [customers, setCustomers] = useState<DashboardCustomer[]>([]);
+  const [meta, setMeta] = useState<DashboardCustomersMeta | null>(null);
   const [query, setQuery] = useState("");
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(3);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    if (!q) return sampleCustomers;
-    return sampleCustomers.filter(
-      (c) => c.fullName.toLowerCase().includes(q) || c.email.toLowerCase().includes(q)
+  const debouncedQuery = useDebounced(query, 400);
+
+  useEffect(() => setPage(1), [query, pageSize]);
+
+  useEffect(() => {
+    let mounted = true;
+
+    async function load() {
+      setLoading(true);
+      setError(null);
+      try {
+        const response = await api.get<DashboardResponse>("/dashboard", {
+          params: {
+            customers_search: debouncedQuery || undefined,
+            customers_per_page: pageSize,
+            page,
+          },
+        });
+
+        if (!mounted) return;
+
+        const payload = response.data;
+        setSummary(payload?.data ?? null);
+        setCustomers(payload?.customers?.items ?? []);
+        setMeta(payload?.customers?.meta ?? null);
+
+        if (payload?.customers?.meta?.current_page && payload.customers.meta.current_page !== page) {
+          setPage(payload.customers.meta.current_page);
+        }
+        if (payload?.customers?.meta?.per_page && payload.customers.meta.per_page !== pageSize) {
+          setPageSize(payload.customers.meta.per_page);
+        }
+      } catch (err: any) {
+        if (!mounted) return;
+        const message =
+          err?.response?.data?.message ||
+          err?.message ||
+          "Failed to load dashboard data";
+        setError(message);
+        setSummary(null);
+        setCustomers([]);
+        setMeta(null);
+      } finally {
+        if (mounted) setLoading(false);
+      }
+    }
+
+    load();
+    return () => {
+      mounted = false;
+    };
+  }, [debouncedQuery, page, pageSize]);
+
+  const productsTotal = summary?.products?.total ?? 0;
+  const articlesTotal = summary?.articles?.total ?? 0;
+  const categoriesTotal = summary?.categories?.total ?? 0;
+
+  const totalItems = meta?.total ?? 0;
+
+  const tableBody = useMemo(() => {
+    if (loading) {
+      return (
+        <tbody className="divide-y divide-gray-200 bg-white">
+          {Array.from({ length: Math.min(pageSize, 5) }).map((_, i) => (
+            <tr key={`loading-${i}`} className="animate-pulse">
+              <td className="whitespace-nowrap px-6 py-4">
+                <div className="h-4 w-40 rounded bg-gray-200" />
+              </td>
+              <td className="whitespace-nowrap px-6 py-4">
+                <div className="h-4 w-56 rounded bg-gray-200" />
+              </td>
+              <td className="whitespace-nowrap px-6 py-4">
+                <div className="h-4 w-32 rounded bg-gray-200" />
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      );
+    }
+
+    if (customers.length === 0) {
+      return (
+        <tbody className="divide-y divide-gray-200 bg-white">
+          <tr>
+            <td colSpan={3} className="px-6 py-8 text-center text-sm text-gray-500">
+              {error ? "Unable to load customers" : "No customers found"}
+            </td>
+          </tr>
+        </tbody>
+      );
+    }
+
+    return (
+      <tbody className="divide-y divide-gray-200 bg-white">
+        {customers.map((c) => (
+          <tr key={c.id} className="hover:bg-gray-50">
+            <td className="whitespace-nowrap px-6 py-4">
+              <div className="text-sm font-medium text-gray-900">{c.full_name}</div>
+            </td>
+            <td className="whitespace-nowrap px-6 py-4">
+              <div className="text-sm text-gray-900">{c.email}</div>
+            </td>
+            <td className="whitespace-nowrap px-6 py-4">
+              <div className="text-sm text-gray-900">{c.whatsapp_number || "-"}</div>
+            </td>
+          </tr>
+        ))}
+      </tbody>
     );
-  }, [query]);
-
-  const totalItems = filtered.length;
-  const startIndex = (page - 1) * pageSize;
-  const current = filtered.slice(startIndex, startIndex + pageSize);
-
-  React.useEffect(() => setPage(1), [query, pageSize]);
+  }, [customers, loading, pageSize, error]);
 
   return (
     <div className="p-6">
@@ -73,19 +208,19 @@ export default function DashboardPage() {
       <div className="mb-8 grid grid-cols-1 gap-5 md:grid-cols-3">
         <StatsCard
           title="Products"
-          value={56}
+          value={productsTotal}
           subtitle="Total of all products"
           href="/products"
         />
         <StatsCard
           title="Articles"
-          value={12}
+          value={articlesTotal}
           subtitle="Total of all articles"
           href="/articles"
         />
         <StatsCard
           title="Product Category"
-          value={8}
+          value={categoriesTotal}
           subtitle="Total of all product category"
           href="/product-category"
         />
@@ -125,26 +260,7 @@ export default function DashboardPage() {
                   <th scope="col" className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">WhatsApp</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-gray-200 bg-white">
-                {current.map((c) => (
-                  <tr key={c.id} className="hover:bg-gray-50">
-                    <td className="whitespace-nowrap px-6 py-4">
-                      <div className="text-sm font-medium text-gray-900">{c.fullName}</div>
-                    </td>
-                    <td className="whitespace-nowrap px-6 py-4">
-                      <div className="text-sm text-gray-900">{c.email}</div>
-                    </td>
-                    <td className="whitespace-nowrap px-6 py-4">
-                      <div className="text-sm text-gray-900">{c.whatsappNumber}</div>
-                    </td>
-                  </tr>
-                ))}
-                {current.length === 0 && (
-                  <tr>
-                    <td colSpan={3} className="px-6 py-8 text-center text-sm text-gray-500">No customers found</td>
-                  </tr>
-                )}
-              </tbody>
+              {tableBody}
             </table>
           </div>
 
@@ -152,13 +268,19 @@ export default function DashboardPage() {
           <div className="border-t border-gray-200 px-4 py-3">
             <Pagination
               totalItems={totalItems}
-              page={page}
-              pageSize={pageSize}
+              page={meta?.current_page ?? page}
+              pageSize={meta?.per_page ?? pageSize}
               onPageChange={setPage}
               onPageSizeChange={setPageSize}
               pageSizeOptions={[3, 5, 10]}
             />
           </div>
+
+          {error && (
+            <div className="border-t border-red-100 bg-red-50 px-4 py-3 text-sm text-red-600">
+              {error}
+            </div>
+          )}
         </div>
       </div>
     </div>
@@ -185,4 +307,15 @@ function Action({ title, sub }: { title: string; sub: string }) {
       <div className="text-sm text-gray-500">{sub}</div>
     </button>
   );
+}
+
+function useDebounced<T>(value: T, delay = 400) {
+  const [debounced, setDebounced] = useState(value);
+
+  useEffect(() => {
+    const timer = setTimeout(() => setDebounced(value), delay);
+    return () => clearTimeout(timer);
+  }, [value, delay]);
+
+  return debounced;
 }
