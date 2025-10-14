@@ -75,21 +75,31 @@ export default function EditCategoryPage() {
   };
 
   const handleSaveChanges = async () => {
-    setError(null);
-    try {
-      const fd = new FormData();
-      fd.append('name[id]', formData.name_id);
-      fd.append('name[en]', formData.name_en);
-      if (formData.slug) fd.append('slug', formData.slug);
-      if (formData.parent_id) fd.append('parent_id', String(Number(formData.parent_id)));
-      fd.append('status', formData.status ? '1' : '0');
-      if (coverFile) fd.append('cover', coverFile);
-      await api.patch(`/categories/${id}`, fd as any);
-      router.replace('/product-category');
-    } catch (e: any) {
-      setError(e?.response?.data?.message || e?.message || 'Failed to update category');
-    }
-  };
+  setError(null);
+  try {
+    const fd = new FormData();
+    fd.append("name[id]", formData.name_id);
+    fd.append("name[en]", formData.name_en || "");
+    if (formData.slug) fd.append("slug", formData.slug);
+    if (formData.parent_id) fd.append("parent_id", String(Number(formData.parent_id)));
+    fd.append("status", formData.status ? "1" : "0");
+    if (coverFile) fd.append("cover", coverFile);
+    else if (formData.cover_url) fd.append("cover_url", formData.cover_url);
+
+    // Opsi A (paling aman): spoof PATCH via POST
+    fd.append("_method", "PATCH");
+    await api.post(`/categories/${id}`, fd); // <-- JANGAN kirim headers Content-Type
+    router.push("/product-category");
+    router.refresh();
+
+    // Opsi B (kalau PATCH multipart diizinkan):
+    // await api.patch(`/categories/${id}`, fd); // juga tanpa headers Content-Type
+
+    router.replace("/product-category");
+  } catch (e: any) {
+    setError(e?.response?.data?.message || e?.message || "Failed to update category");
+  }
+};
 
   const handleCancel = () => router.push('/product-category');
 

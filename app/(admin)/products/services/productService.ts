@@ -5,12 +5,21 @@ export type ApiProduct = {
   name_text?: string;
   slug?: string;
   price?: number | string | null;
+  price_min?: number | string | null;
+  variants_min_price?: number | string | null;
   stock?: number | string | null;
   status?: string | boolean | null;
   category_id?: number | null;
   category_name?: string | null;
   cover?: string | null;
   cover_url?: string | null;
+  gallery?: Array<{
+    id?: number;
+    url?: string | null;
+    title?: unknown;
+    alt?: unknown;
+  }>;
+  favorites_count?: number | null;
   created_at?: string | null;
   updated_at?: string | null;
 };
@@ -32,6 +41,7 @@ export type ProductListResponse = {
 export type ProductListParams = {
   search?: string;
   category_id?: number;
+  status?: "active" | "inactive";
   sort?: string;
   dir?: "asc" | "desc";
   page?: number;

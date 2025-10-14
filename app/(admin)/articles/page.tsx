@@ -27,44 +27,75 @@ type ArticlesResponse = {
 };
 
 export default function ArticlesPage() {
-  const [rows, setRows] = useState<ArticleItem[]>([]);
+  // sumber data mentah seluruh artikel
+  const [allRows, setAllRows] = useState<ArticleItem[]>([]);
+  // ui state
   const [activeFilter, setActiveFilter] = useState<"All" | "Publish" | "Draft">("All");
   const [query, setQuery] = useState("");
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage, setItemsPerPage] = useState(10);
-  const [totalItems, setTotalItems] = useState(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [toast, setToast] = useState<{ show: boolean; msg: string; variant?: "success" | "error" }>({ show: false, msg: "" });
 
-  const fetchArticles = async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const { data } = await api.get<ArticlesResponse>("/articles", {
-        params: {
-          page: currentPage,
-          per_page: itemsPerPage,
-        },
-      });
-      setRows(data.data || []);
-      setTotalItems(data.meta?.total ?? 0);
-    } catch (e: any) {
-      setError(e?.message || "Gagal memuat artikel");
-      setRows([]);
-      setTotalItems(0);
-    } finally {
-      setLoading(false);
-    }
-  };
-
+  // Fetch sekali: ambil "semua" artikel (atau sebanyak mungkin)
   useEffect(() => {
-    fetchArticles();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentPage, itemsPerPage, activeFilter, query]);
+    const run = async () => {
+      setLoading(true);
+      setError(null);
+      try {
+        const { data } = await api.get<ArticlesResponse>("/articles", {
+          params: { page: 1, per_page: 1000 }, // ambil banyak agar bisa difilter lokal
+        });
+        setAllRows(Array.isArray(data.data) ? data.data : []);
+      } catch (e: any) {
+        setError(e?.message || "Gagal memuat artikel");
+        setAllRows([]);
+      } finally {
+        setLoading(false);
+      }
+    };
+    run();
+  }, []);
 
+  // Filter lokal (status + search)
+  const filteredRows = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    let list = allRows;
+
+    if (activeFilter === "Publish") {
+      list = list.filter(a => String(a.status).toLowerCase() === "publish" || a.published === true);
+    } else if (activeFilter === "Draft") {
+      list = list.filter(a => String(a.status).toLowerCase() === "draft" || a.published === false);
+    }
+
+    if (q) {
+      list = list.filter(a => {
+        const title = (a.title_text || "").toLowerCase();
+        const author = (a.author_name || "").toLowerCase();
+        return title.includes(q) || author.includes(q);
+      });
+    }
+
+    return list;
+  }, [allRows, activeFilter, query]);
+
+  // Pagination lokal dari filteredRows
+  const totalItems = filteredRows.length;
+  const pageRows = useMemo(() => {
+    const start = (currentPage - 1) * itemsPerPage;
+    const end = start + itemsPerPage;
+    return filteredRows.slice(start, end);
+  }, [filteredRows, currentPage, itemsPerPage]);
+
+  // Reset halaman saat ganti filter / query
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [activeFilter, query]);
+
+  // Toggle publish (lokal saja—tidak call API)
   const handleTogglePublish = (id: number) => {
-    setRows(prev =>
+    setAllRows(prev =>
       prev.map(a =>
         a.id === id
           ? { ...a, published: !a.published, status: !a.published ? "publish" : "draft" }
@@ -76,25 +107,25 @@ export default function ArticlesPage() {
   const handleEdit = (id: number) => {
     window.location.href = `/articles/edit/${id}`;
   };
+
   const handleDelete = async (id: number) => {
     const ok = window.confirm("Hapus artikel ini?");
     if (!ok) return;
     try {
       await api.delete(`/articles/${id}`);
       setToast({ show: true, msg: "Artikel berhasil dihapus", variant: "success" });
-      // If last item removed on the page and not on first page, go back a page
-      if (rows.length === 1 && currentPage > 1) {
-        setCurrentPage(currentPage - 1);
-      } else {
-        fetchArticles();
-      }
+      // hapus dari sumber data lokal
+      setAllRows(prev => prev.filter(a => a.id !== id));
+      // jika halaman jadi kosong, geser ke halaman sebelumnya
+      const after = filteredRows.length - 1;
+      const maxPage = Math.max(1, Math.ceil(after / itemsPerPage));
+      if (currentPage > maxPage) setCurrentPage(maxPage);
     } catch (e: any) {
       setToast({ show: true, msg: e?.message || "Gagal menghapus artikel", variant: "error" });
     }
   };
-  const handleNewArticle = () => {
-    window.location.href = '/articles/add';
-  };
+
+  const handleNewArticle = () => (window.location.href = "/articles/add");
 
   const handlePageChange = (p: number) => setCurrentPage(p);
   const handlePageSizeChange = (n: number) => {
@@ -104,7 +135,7 @@ export default function ArticlesPage() {
 
   return (
     <div className="min-h-full">
-      {/* Top breadcrumb bar */}
+      {/* Breadcrumb */}
       <div className="px-6 py-3 border-b border-gray-200 bg-white">
         <nav className="flex items-center gap-2 text-sm text-gray-500">
           <span>Articles</span>
@@ -113,14 +144,14 @@ export default function ArticlesPage() {
         </nav>
       </div>
 
-      {/* Page header */}
+      {/* Header */}
       <div className="px-6 py-6 bg-white border-b border-gray-200">
         <div className="flex items-center justify-between">
           <h1 className="text-2xl font-semibold text-gray-900">Articles</h1>
           <NewNounButton noun="article" onClick={handleNewArticle} />
         </div>
 
-        {/* Pills filter — centered */}
+        {/* Filter pills */}
         <div className="mt-6 flex justify-center">
           <div className="inline-flex items-center gap-2 rounded-full bg-gray-100/60 p-1">
             {(["All", "Publish", "Draft"] as const).map(f => (
@@ -129,9 +160,7 @@ export default function ArticlesPage() {
                 onClick={() => setActiveFilter(f)}
                 className={[
                   "rounded-full px-4 py-1.5 text-sm font-medium transition",
-                  activeFilter === f
-                    ? "bg-white text-gray-800 shadow-sm"
-                    : "text-gray-500 hover:text-gray-700"
+                  activeFilter === f ? "bg-white text-gray-800 shadow-sm" : "text-gray-500 hover:text-gray-700",
                 ].join(" ")}
               >
                 {f}
@@ -141,16 +170,13 @@ export default function ArticlesPage() {
         </div>
       </div>
 
-      {/* Main card */}
+      {/* Main */}
       <div className="flex-1 bg-gray-50">
         <div className="px-6 py-6">
           <div className="rounded-xl border border-gray-200 bg-white shadow-sm">
-            {/* Card toolbar (kanan: search + 2 icon) */}
+            {/* Toolbar kanan */}
             <div className="flex items-center justify-between gap-3 px-4 py-3 border-b border-gray-200">
-              <div className="flex items-center gap-3">
-                
-              </div>
-
+              <div className="flex items-center gap-3" />
               <div className="flex items-center gap-2">
                 <div className="relative">
                   <input
@@ -163,16 +189,12 @@ export default function ArticlesPage() {
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
                   </svg>
                 </div>
-
-                {/* Bell count (dummy agar mirip) */}
                 <button className="relative inline-flex items-center justify-center rounded-md border border-gray-200 p-2 text-gray-500 hover:bg-gray-50">
                   <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor">
                     <path strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6 6 0 10-12 0v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1h6z"/>
                   </svg>
                   <span className="absolute -right-1 -top-1 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-amber-500 px-1 text-[10px] font-semibold text-white">0</span>
                 </button>
-
-                {/* Filter icon */}
                 <button className="inline-flex items-center justify-center rounded-md border border-gray-200 p-2 text-gray-500 hover:bg-gray-50">
                   <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor">
                     <path strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" d="M3 4h18M6 12h12M10 20h4"/>
@@ -229,41 +251,23 @@ export default function ArticlesPage() {
                   {loading ? (
                     Array.from({ length: Math.min(itemsPerPage, 10) }).map((_, idx) => (
                       <tr key={`sk-${idx}`} className="animate-pulse">
-                        <td className="px-3 sm:px-6 py-4">
-                          <div className="h-4 w-4 rounded bg-gray-200" />
-                        </td>
-                        <td className="px-3 sm:px-6 py-4">
-                          <div className="h-12 w-12 rounded bg-gray-200" />
-                        </td>
-                        <td className="px-3 sm:px-6 py-4">
-                          <div className="h-4 w-56 rounded bg-gray-200" />
-                        </td>
-                        <td className="hidden sm:table-cell px-3 sm:px-6 py-4">
-                          <div className="h-4 w-32 rounded bg-gray-200" />
-                        </td>
-                        <td className="px-3 sm:px-6 py-4">
-                          <div className="h-6 w-20 rounded bg-gray-200" />
-                        </td>
-                        <td className="px-3 sm:px-6 py-4">
-                          <div className="h-6 w-16 rounded bg-gray-200" />
-                        </td>
-                        <td className="px-3 sm:px-6 py-4">
-                          <div className="h-6 w-20 rounded bg-gray-200" />
-                        </td>
+                        <td className="px-3 sm:px-6 py-4"><div className="h-4 w-4 rounded bg-gray-200" /></td>
+                        <td className="px-3 sm:px-6 py-4"><div className="h-12 w-12 rounded bg-gray-200" /></td>
+                        <td className="px-3 sm:px-6 py-4"><div className="h-4 w-56 rounded bg-gray-200" /></td>
+                        <td className="hidden sm:table-cell px-3 sm:px-6 py-4"><div className="h-4 w-32 rounded bg-gray-200" /></td>
+                        <td className="px-3 sm:px-6 py-4"><div className="h-6 w-20 rounded bg-gray-200" /></td>
+                        <td className="px-3 sm:px-6 py-4"><div className="h-6 w-16 rounded bg-gray-200" /></td>
+                        <td className="px-3 sm:px-6 py-4"><div className="h-6 w-20 rounded bg-gray-200" /></td>
                       </tr>
                     ))
-                  ) : rows.length === 0 ? (
+                  ) : pageRows.length === 0 ? (
                     <tr>
-                      <td colSpan={7} className="px-3 sm:px-6 py-10 text-center text-gray-500">
-                        Tidak ada artikel
-                      </td>
+                      <td colSpan={7} className="px-3 sm:px-6 py-10 text-center text-gray-500">Tidak ada artikel</td>
                     </tr>
                   ) : (
-                    rows.map(article => (
+                    pageRows.map(article => (
                       <tr key={article.id} className="hover:bg-gray-50">
-                        <td className="px-3 sm:px-6 py-4">
-                          <input type="checkbox" className="rounded border-gray-300" />
-                        </td>
+                        <td className="px-3 sm:px-6 py-4"><input type="checkbox" className="rounded border-gray-300" /></td>
                         <td className="px-3 sm:px-6 py-4">
                           <div className="h-10 w-10 sm:h-12 sm:w-12 overflow-hidden rounded bg-gray-200">
                             <img
@@ -278,19 +282,13 @@ export default function ArticlesPage() {
                           </div>
                         </td>
                         <td className="px-3 sm:px-6 py-4">
-                          <div className="max-w-xs truncate text-sm font-medium text-gray-900">
-                            {article.title_text}
-                          </div>
+                          <div className="max-w-xs truncate text-sm font-medium text-gray-900">{article.title_text}</div>
                         </td>
                         <td className="hidden sm:table-cell px-3 sm:px-6 py-4">
                           <div className="text-sm text-gray-900">{article.author_name}</div>
                         </td>
-                        <td className="px-3 sm:px-6 py-4">
-                          <StatusBadge status={article.status as any} />
-                        </td>
-                        <td className="px-3 sm:px-6 py-4">
-                          <ToggleSwitch checked={!!article.published} onChange={() => handleTogglePublish(article.id)} />
-                        </td>
+                        <td className="px-3 sm:px-6 py-4"><StatusBadge status={article.status as any} /></td>
+                        <td className="px-3 sm:px-6 py-4"><ToggleSwitch checked={!!article.published} onChange={() => handleTogglePublish(article.id)} /></td>
                         <td className="px-3 sm:px-6 py-4">
                           <div className="flex items-center gap-3 sm:gap-4">
                             <EditButton onClick={() => handleEdit(article.id)} />
@@ -304,7 +302,7 @@ export default function ArticlesPage() {
               </table>
             </div>
 
-            {/* Footer pagination (di dalam card) */}
+            {/* Pagination */}
             <div className="border-t border-gray-200 px-4 py-3">
               <Pagination
                 totalItems={totalItems}
@@ -318,6 +316,7 @@ export default function ArticlesPage() {
           </div>
         </div>
       </div>
+
       <Toast show={toast.show} message={toast.msg} variant={toast.variant} onClose={() => setToast({ show: false, msg: "" })} />
     </div>
   );

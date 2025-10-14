@@ -17,6 +17,7 @@ import {
 
 type SortField = "name" | "price" | "created_at";
 type SortDirection = "asc" | "desc";
+type StatusFilter = "all" | "active" | "inactive";
 
 type CategoryOption = {
   value: string;
@@ -34,10 +35,10 @@ type DisplayProduct = {
   id: number;
   name: string;
   priceLabel: string;
-  stockLabel: string;
   status: "draft" | "active" | "publish" | "non-active";
   categoryName: string;
   coverUrl: string;
+  gallery?: ApiProduct["gallery"];
 };
 
 const DEFAULT_META: ProductMeta = {
@@ -52,6 +53,12 @@ const SORT_OPTIONS: { label: string; value: SortField }[] = [
   { label: "Nama", value: "name" },
   { label: "Harga", value: "price" },
   { label: "Tanggal dibuat", value: "created_at" },
+];
+
+const STATUS_FILTER_OPTIONS: { label: string; value: StatusFilter }[] = [
+  { label: "All", value: "all" },
+  { label: "Active", value: "active" },
+  { label: "Inactive", value: "inactive" },
 ];
 
 const DEFAULT_PAGE_SIZE_OPTIONS = [12, 24, 48];
@@ -85,7 +92,7 @@ function resolveStatus(value: ApiProduct["status"]):
   | "publish"
   | "non-active" {
   if (value === "draft" || value === "publish") return value;
-  if (value === true || value === 1 || value === "1") return "active";
+  if (value === true || value === "1") return "active";
   if (typeof value === "string") {
     const normalized = value.toLowerCase();
     if (normalized === "active") return "active";
@@ -104,6 +111,46 @@ function safeNumber(value: number | string | null | undefined): number | null {
   return Number.isFinite(num) ? num : null;
 }
 
+function sortProductsByField(items: ApiProduct[], sortField: SortField, sortDir: SortDirection): ApiProduct[] {
+  const multiplier = sortDir === "asc" ? 1 : -1;
+  const clone = [...items];
+
+  clone.sort((a, b) => {
+    let comparison = 0;
+    if (sortField === "name") {
+      const nameA = (a.name_text || a.slug || "").toString().toLowerCase();
+      const nameB = (b.name_text || b.slug || "").toString().toLowerCase();
+      comparison = nameA.localeCompare(nameB, "id");
+    } else if (sortField === "price") {
+      const valueA =
+        safeNumber(a.price) ??
+        safeNumber(a.price_min) ??
+        safeNumber(a.variants_min_price) ??
+        0;
+      const valueB =
+        safeNumber(b.price) ??
+        safeNumber(b.price_min) ??
+        safeNumber(b.variants_min_price) ??
+        0;
+      comparison = valueA - valueB;
+    } else {
+      const dateA = Date.parse(a.created_at ?? "") || 0;
+      const dateB = Date.parse(b.created_at ?? "") || 0;
+      comparison = dateA - dateB;
+    }
+
+    if (comparison === 0) {
+      const tieBreakerA = Date.parse(a.created_at ?? "") || 0;
+      const tieBreakerB = Date.parse(b.created_at ?? "") || 0;
+      comparison = tieBreakerA - tieBreakerB;
+    }
+
+    return comparison * multiplier;
+  });
+
+  return clone;
+}
+
 export default function ProductsPage() {
   const router = useRouter();
 
@@ -117,6 +164,7 @@ export default function ProductsPage() {
   const [categoryId, setCategoryId] = useState<string>("all");
   const [sortField, setSortField] = useState<SortField>("created_at");
   const [sortDir, setSortDir] = useState<SortDirection>("desc");
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
 
   const [categories, setCategories] = useState<CategoryOption[]>([]);
   const [loading, setLoading] = useState(false);
@@ -151,59 +199,119 @@ export default function ProductsPage() {
 
   useEffect(() => {
     setPage(1);
-  }, [debouncedSearch, categoryId, sortField, sortDir]);
+  }, [debouncedSearch, categoryId, sortField, sortDir, statusFilter]);
 
   useEffect(() => {
-    let active = true;
+    let mounted = true;
+
     const loadProducts = async () => {
       setLoading(true);
       setError(null);
+
       try {
-        const params: ProductListParams = {
+        const baseParams: ProductListParams = {
           sort: sortField,
           dir: sortDir,
-          page,
-          per_page: pageSize,
         };
-        if (debouncedSearch.trim()) params.search = debouncedSearch.trim();
+
+        if (debouncedSearch.trim()) {
+          baseParams.search = debouncedSearch.trim();
+        }
+
         const categoryParam = categoryId !== "all" ? Number(categoryId) : undefined;
         if (typeof categoryParam === "number" && !Number.isNaN(categoryParam)) {
-          params.category_id = categoryParam;
+          baseParams.category_id = categoryParam;
         }
 
-        const response = await fetchProducts(params);
-        if (!active) return;
+        if (statusFilter === "all") {
+          const take = Math.max(page, 1) * pageSize;
+          const [activeResponse, inactiveResponse] = await Promise.all([
+            fetchProducts({ ...baseParams, status: "active", page: 1, per_page: take }),
+            fetchProducts({ ...baseParams, status: "inactive", page: 1, per_page: take }),
+          ]);
 
-        const payload: ProductListResponse | undefined = response?.data;
-        const rawMeta = payload?.meta;
-        const normalizedMeta: ProductMeta = {
-          current_page: Math.max(1, rawMeta?.current_page ?? page),
-          per_page: rawMeta?.per_page ?? pageSize,
-          total: rawMeta?.total ?? (Array.isArray(payload?.data) ? payload.data.length : 0),
-          last_page: Math.max(1, rawMeta?.last_page ?? 1),
-        };
+          if (!mounted) return;
 
-        if (page > normalizedMeta.last_page) {
-          setPage(normalizedMeta.last_page);
-          return;
-        }
+          const activePayload: ProductListResponse | undefined = activeResponse?.data;
+          const inactivePayload: ProductListResponse | undefined = inactiveResponse?.data;
 
-        setProducts(Array.isArray(payload?.data) ? payload.data : []);
-        setMeta(normalizedMeta);
-        if (normalizedMeta.per_page !== pageSize) {
-          setPageSize(normalizedMeta.per_page);
+          const activeItems = Array.isArray(activePayload?.data) ? activePayload.data : [];
+          const inactiveItems = Array.isArray(inactivePayload?.data) ? inactivePayload.data : [];
+          const combined = sortProductsByField(
+            [...activeItems, ...inactiveItems],
+            sortField,
+            sortDir
+          );
+
+          const totalActive = activePayload?.meta?.total ?? activeItems.length;
+          const totalInactive = inactivePayload?.meta?.total ?? inactiveItems.length;
+          const totalItems = totalActive + totalInactive;
+
+          const lastPage = Math.max(1, Math.ceil(totalItems / pageSize));
+          if (page > lastPage) {
+            setPage(lastPage);
+            return;
+          }
+
+          const currentPage = Math.max(page, 1);
+          const start = (currentPage - 1) * pageSize;
+          const end = start + pageSize;
+          const currentSlice = combined.slice(start, end);
+
+          setProducts(currentSlice);
+          setMeta({
+            current_page: currentPage,
+            per_page: pageSize,
+            total: totalItems,
+            last_page: lastPage,
+          });
+        } else {
+          const response = await fetchProducts({
+            ...baseParams,
+            status: statusFilter,
+            page,
+            per_page: pageSize,
+          });
+
+          if (!mounted) return;
+
+          const payload: ProductListResponse | undefined = response?.data;
+          const rawMeta = payload?.meta;
+          const normalizedMeta: ProductMeta = {
+            current_page: Math.max(1, rawMeta?.current_page ?? page),
+            per_page: rawMeta?.per_page ?? pageSize,
+            total: rawMeta?.total ?? (Array.isArray(payload?.data) ? payload.data.length : 0),
+            last_page: Math.max(1, rawMeta?.last_page ?? 1),
+          };
+
+          if (page > normalizedMeta.last_page) {
+            setPage(normalizedMeta.last_page);
+            return;
+          }
+
+          setProducts(Array.isArray(payload?.data) ? payload.data : []);
+          setMeta(normalizedMeta);
+
+          if (normalizedMeta.per_page !== pageSize) {
+            setPageSize(normalizedMeta.per_page);
+          }
         }
       } catch (fetchError: any) {
-        if (!active) return;
+        if (!mounted) return;
         const message =
           fetchError?.response?.data?.message ||
           fetchError?.message ||
           "Failed to fetch products";
         setProducts([]);
-        setMeta((prev) => ({ ...prev, total: 0, last_page: 1 }));
+        setMeta({
+          current_page: 1,
+          per_page: pageSize,
+          total: 0,
+          last_page: 1,
+        });
         setError(message);
       } finally {
-        if (active) {
+        if (mounted) {
           setLoading(false);
         }
       }
@@ -212,9 +320,9 @@ export default function ProductsPage() {
     loadProducts();
 
     return () => {
-      active = false;
+      mounted = false;
     };
-  }, [debouncedSearch, categoryId, sortField, sortDir, page, pageSize]);
+  }, [debouncedSearch, categoryId, sortField, sortDir, statusFilter, page, pageSize]);
 
   const categoryOptions = useMemo(
     () => [{ value: "all", label: "Semua kategori" }, ...categories],
@@ -236,26 +344,24 @@ export default function ProductsPage() {
     []
   );
 
-  const numberFormatter = useMemo(() => new Intl.NumberFormat("id-ID"), []);
-
   const displayProducts = useMemo<DisplayProduct[]>(() => {
     return products.map((item) => {
-      const priceNumber = safeNumber(item.price);
-      const stockNumber = safeNumber(item.stock);
+      const priceNumber =
+        safeNumber(item.price) ??
+        safeNumber(item.price_min) ??
+        safeNumber(item.variants_min_price);
       return {
         id: item.id,
         name: item.name_text || item.slug || `Produk ${item.id}`,
         priceLabel:
           priceNumber != null ? currencyFormatter.format(priceNumber) : "-",
-        // stockLabel:
-        //   stockNumber != null ? numberFormatter.format(stockNumber) : "-",
         status: resolveStatus(item.status),
         categoryName: item.category_name || "-",
         coverUrl: toImageUrl(item.cover_url ?? item.cover ?? null),
-        galery: item.gallery,
+        gallery: item.gallery,
       };  
     });
-  }, [products, currencyFormatter, numberFormatter]);
+  }, [products, currencyFormatter]);
 
   const handleNewProduct = () => router.push("/products/create");
   const handleEdit = (id: number) => {
@@ -269,7 +375,19 @@ export default function ProductsPage() {
       await api.delete(`/products/${id}`);
       // Refresh daftar produk setelah delete
       setProducts((prev) => prev.filter((p) => p.id !== id));
-      setMeta((prev) => ({ ...prev, total: prev.total - 1 }));
+      setMeta((prev) => {
+        const nextTotal = Math.max(0, (prev.total ?? 0) - 1);
+        const nextLastPage = Math.max(1, Math.ceil(nextTotal / pageSize));
+        if (page > nextLastPage) {
+          setPage(nextLastPage);
+        }
+        return {
+          ...prev,
+          total: nextTotal,
+          last_page: nextLastPage,
+          current_page: Math.min(prev.current_page, nextLastPage),
+        };
+      });
     } catch (err: any) {
       console.error("Gagal menghapus produk:", err);
       alert(
@@ -287,6 +405,7 @@ export default function ProductsPage() {
     setCategoryId("all");
     setSortField("created_at");
     setSortDir("desc");
+     setStatusFilter("all");
     setPageSize(DEFAULT_META.per_page);
     setPage(1);
   };
@@ -351,6 +470,8 @@ export default function ProductsPage() {
                   ))}
                 </select>
 
+  
+
                 <div className="hidden flex items-center gap-1">
                   <select
                     value={sortField}
@@ -377,29 +498,6 @@ export default function ProductsPage() {
                   </button>
                 </div>
               </div>
-
-              <div className="hidden flex items-center gap-2">
-             
-                <button
-                  className="inline-flex items-center justify-center rounded-md border border-gray-200 p-2 text-gray-500 hover:bg-gray-50"
-                  type="button"
-                  onClick={resetFilters}
-                  aria-label="Reset filter"
-                >
-                  <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-                    <path
-                      strokeWidth="2"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      d="M3 5h18M6 12h12M10 19h4"
-                    />
-                  </svg>
-                </button>
-              </div>
-            </div>
-
-            <div className="px-4 pt-4 text-sm text-gray-500" aria-live="polite" id="products-table-status">
-              {loading ? "Memuat data produk..." : `${meta.total} produk ditemukan`}
             </div>
 
             {error ? (
@@ -441,12 +539,6 @@ export default function ProductsPage() {
                       className="hidden px-3 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 sm:table-cell sm:px-6"
                     >
                       Kategori
-                    </th>
-                    <th
-                      scope="col"
-                      className="px-3 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 sm:px-6"
-                    >
-                      Harga
                     </th>
                     {/* <th
                       scope="col"
@@ -494,34 +586,33 @@ export default function ProductsPage() {
                         </td>
                         <td className="px-3 py-4 sm:px-6">
                           <div className="h-12 w-12 overflow-hidden rounded bg-gray-200">
-                            {/* {JSON.stringify(product?.galery[0]?.url)} */}
-                            {product?.galery?.[0]?.url ? (
-                                <img
-                                  src={product.galery[0].url}
-                                  alt={`Cover ${product?.name || "Product"}`}
-                                  className="h-full w-full object-cover"
-                                  onError={(event) => {
-                                    event.currentTarget.src = PLACEHOLDER; // opsional fallback
-                                  }}
-                                />
-                              ) : (
-                                <div className="flex h-full w-full items-center justify-center bg-gray-100">
-                                  <svg
-                                    xmlns="http://www.w3.org/2000/svg"
-                                    viewBox="0 0 24 24"
-                                    fill="none"
-                                    stroke="currentColor"
-                                    strokeWidth="1.5"
-                                    className="h-16 w-16 text-gray-400"
-                                  >
-                                    <path
-                                      strokeLinecap="round"
-                                      strokeLinejoin="round"
-                                      d="M3 5a2 2 0 012-2h14a2 2 0 012 2v14a2 2 0 01-2 2H5a2 2 0 01-2-2V5zm3 12l3.086-3.086a2 2 0 012.828 0L15 17m-2-7a2 2 0 11-4 0 2 2 0 014 0z"
-                                    />
-                                  </svg>
-                                </div>
-                              )}
+                            {product?.gallery?.[0]?.url ? (
+                              <img
+                                src={product.gallery[0].url ?? PLACEHOLDER}
+                                alt={`Cover ${product?.name || "Product"}`}
+                                className="h-full w-full object-cover"
+                                onError={(event) => {
+                                  event.currentTarget.src = PLACEHOLDER;
+                                }}
+                              />
+                            ) : (
+                              <div className="flex h-full w-full items-center justify-center bg-gray-100">
+                                <svg
+                                  xmlns="http://www.w3.org/2000/svg"
+                                  viewBox="0 0 24 24"
+                                  fill="none"
+                                  stroke="currentColor"
+                                  strokeWidth="1.5"
+                                  className="h-16 w-16 text-gray-400"
+                                >
+                                  <path
+                                    strokeLinecap="round"
+                                    strokeLinejoin="round"
+                                    d="M3 5a2 2 0 012-2h14a2 2 0 012 2v14a2 2 0 01-2 2H5a2 2 0 01-2-2V5zm3 12l3.086-3.086a2 2 0 012.828 0L15 17m-2-7a2 2 0 11-4 0 2 2 0 014 0z"
+                                  />
+                                </svg>
+                              </div>
+                            )}
                           </div>
                         </td>
                         <td className="px-3 py-4 sm:px-6">
@@ -531,9 +622,6 @@ export default function ProductsPage() {
                         </td>
                         <td className="hidden whitespace-nowrap px-3 py-4 text-sm text-gray-900 sm:table-cell sm:px-6">
                           {product.categoryName}
-                        </td>
-                        <td className="whitespace-nowrap px-3 py-4 text-sm text-gray-900 sm:px-6">
-                          {product.priceLabel}
                         </td>
                         {/* <td className="whitespace-nowrap px-3 py-4 text-sm text-gray-900 sm:px-6">
                           {product.stockLabel}

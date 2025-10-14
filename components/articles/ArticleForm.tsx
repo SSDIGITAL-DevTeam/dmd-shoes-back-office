@@ -60,6 +60,11 @@ export const ArticleForm: React.FC<Props> = ({ mode, initial, showDelete }) => {
     setToast({ show: true, msg: "Draft tersimpan", variant: "success" });
   };
 
+  // util class untuk input
+  const inputCls = "w-full rounded-md border border-gray-300 px-3 py-2 text-sm text-black placeholder:text-gray-400";
+  const titleCls = "w-full rounded-md border px-3 py-2 text-xl font-medium text-black";
+  const selectCls = "w-full rounded-md border border-gray-300 px-3 py-2 text-sm text-black";
+
   return (
     <div className="p-6">
       {/* Breadcrumb + Delete (edit only) */}
@@ -95,7 +100,7 @@ export const ArticleForm: React.FC<Props> = ({ mode, initial, showDelete }) => {
                   placeholder="Masukkan judul artikel..."
                   value={state.title}
                   onChange={(e) => actions.setTitle(e.target.value)}
-                  className={`w-full rounded-md border px-3 py-2 text-xl font-medium ${titleError ? "border-red-500" : "border-gray-300"}`}
+                  className={`${titleCls} ${titleError ? "border-red-500" : "border-gray-300"}`}
                 />
                 {titleError && <p className="mt-1 text-xs text-red-600">{titleError}</p>}
               </div>
@@ -108,7 +113,7 @@ export const ArticleForm: React.FC<Props> = ({ mode, initial, showDelete }) => {
                   aria-label="Slug"
                   value={state.slug}
                   onChange={(e) => actions.setSlug(kebabCase(e.target.value))}
-                  className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm"
+                  className={inputCls}
                 />
               </div>
 
@@ -120,7 +125,7 @@ export const ArticleForm: React.FC<Props> = ({ mode, initial, showDelete }) => {
                   aria-label="Category"
                   value={state.category}
                   onChange={(e) => actions.setCategory(e.target.value)}
-                  className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm"
+                  className={selectCls}
                 >
                   <option value="">- Choose -</option>
                   <option value="Teknologi">Teknologi</option>
@@ -129,7 +134,7 @@ export const ArticleForm: React.FC<Props> = ({ mode, initial, showDelete }) => {
                 </select>
               </div>
 
-              {/* Description / Content (CKEditor) */}
+              {/* Description / Content (TinyMCE) */}
               <div>
                 <label className="mb-2 block text-sm font-medium text-gray-700">Description</label>
                 <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-2">
@@ -138,6 +143,8 @@ export const ArticleForm: React.FC<Props> = ({ mode, initial, showDelete }) => {
                     onChange={actions.setContent}
                     placeholder="Tulis artikel Anda di sini…"
                     autosaveKey={`article:${mode}:content`}
+                    // pastikan komponen TinyMCEEditor meneruskan ini ke init.content_style
+                    contentStyle={`body{color:#111827} p,li,div,span{color:#111827}`}
                   />
                 </div>
               </div>
@@ -166,12 +173,12 @@ export const ArticleForm: React.FC<Props> = ({ mode, initial, showDelete }) => {
                 </div>
               ) : (
                 <label
-                  onDrop={onDropCover}
+                  onDrop={(e) => { e.preventDefault(); const f = e.dataTransfer.files?.[0]; if (f) actions.onPickCover(f); }}
                   onDragOver={(e) => e.preventDefault()}
                   className="flex cursor-pointer flex-col items-center justify-center rounded-lg border-2 border-dashed border-gray-300 p-6 text-sm text-gray-500 hover:bg-gray-50"
                 >
                   <span>Drag & drop cover here, or click to upload</span>
-                  <input type="file" accept="image/*" className="hidden" onChange={onPickFile} aria-label="Upload cover" />
+                  <input type="file" accept="image/*" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) actions.onPickCover(f); }} aria-label="Upload cover" />
                 </label>
               )}
             </div>
@@ -186,10 +193,16 @@ export const ArticleForm: React.FC<Props> = ({ mode, initial, showDelete }) => {
               <input
                 aria-label="New Tag"
                 placeholder="New Tag"
-                className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm"
+                className={inputCls}
                 value={newTag}
                 onChange={(e) => setNewTag(e.target.value)}
-                onKeyDown={onTagKey}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    actions.addTag(newTag);
+                    setNewTag("");
+                  }
+                }}
               />
               <div className="flex flex-wrap gap-2">
                 {state.tags.map((t) => (
@@ -214,7 +227,7 @@ export const ArticleForm: React.FC<Props> = ({ mode, initial, showDelete }) => {
                   aria-label="SEO Tags"
                   value={state.seoTags}
                   onChange={(e) => actions.setSeoTags(e.target.value)}
-                  className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm"
+                  className={inputCls}
                 />
               </div>
               <div>
@@ -223,7 +236,7 @@ export const ArticleForm: React.FC<Props> = ({ mode, initial, showDelete }) => {
                   aria-label="SEO Keyword"
                   value={state.keyword}
                   onChange={(e) => actions.setKeyword(e.target.value)}
-                  className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm"
+                  className={inputCls}
                 />
               </div>
               <div>
@@ -233,7 +246,7 @@ export const ArticleForm: React.FC<Props> = ({ mode, initial, showDelete }) => {
                   rows={4}
                   value={state.seoDescription}
                   onChange={(e) => actions.setSeoDescription(e.target.value)}
-                  className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm"
+                  className={`${inputCls} resize-none`}
                 />
               </div>
             </div>

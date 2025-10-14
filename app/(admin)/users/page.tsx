@@ -6,55 +6,200 @@ import { StatusBadge } from "@/components/ui/StatusBadge";
 import { EditButton } from "@/components/ui/EditIcon";
 import { DeleteButton } from "@/components/ui/DeleteIcon";
 import { Pagination } from "@/components/layout/Pagination";
+import { useRouter } from "next/navigation";
 
-// Sample data
-const sampleUsers = [
-  { id: 1, name: "admin", email: "admin@dmd.co.id", status: "active" as const },
-  { id: 2, name: "admindmd", email: "admindmd@dmd.co.id", status: "non-active" as const },
-  { id: 3, name: "john.doe", email: "john@dmd.co.id", status: "active" as const },
-  { id: 4, name: "jane.smith", email: "jane@dmd.co.id", status: "non-active" as const },
-  { id: 5, name: "user1", email: "user1@dmd.co.id", status: "active" as const },
-  { id: 6, name: "user2", email: "user2@dmd.co.id", status: "active" as const },
-  { id: 7, name: "user3", email: "user3@dmd.co.id", status: "non-active" as const },
-  { id: 8, name: "user4", email: "user4@dmd.co.id", status: "active" as const },
-  { id: 9, name: "user5", email: "user5@dmd.co.id", status: "non-active" as const },
-  { id: 10, name: "user6", email: "user6@dmd.co.id", status: "active" as const },
-  { id: 11, name: "user7", email: "user7@dmd.co.id", status: "active" as const },
-  { id: 12, name: "user8", email: "user8@dmd.co.id", status: "non-active" as const },
-];
+/* =========================
+   Types aligned with Laravel
+   ========================= */
+type LaravelUser = {
+  id: number;
+  name: string;
+  email: string;
+  status: boolean; // true=active, false=inactive
+};
+
+type UsersIndexResponse = {
+  status: string;
+  message: string;
+  data: LaravelUser[];
+  meta: {
+    current_page: number;
+    per_page: number;
+    total: number;
+    last_page: number;
+  };
+};
+
+// For StatusBadge prop compatibility
+type UiStatus = "active" | "non-active";
+const mapBoolToUi = (b: boolean): UiStatus => (b ? "active" : "non-active");
+
+/* Small helper: debounce */
+function useDebounced<T>(value: T, delay = 400) {
+  const [debounced, setDebounced] = useState(value);
+  useEffect(() => {
+    const t = setTimeout(() => setDebounced(value), delay);
+    return () => clearTimeout(t);
+  }, [value, delay]);
+  return debounced;
+}
 
 export default function UsersPage() {
-  const [users] = useState(sampleUsers);
+  // server data
+  const [rows, setRows] = useState<LaravelUser[]>([]);
+  const [meta, setMeta] = useState<UsersIndexResponse["meta"] | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // ui controls
   const [query, setQuery] = useState("");
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage, setItemsPerPage] = useState(3);
-  const [statusFilter, setStatusFilter] = useState<"all" | "active" | "non-active">("all");
+  const [statusFilter, setStatusFilter] = useState<
+    "all" | "active" | "non-active"
+  >("all");
 
-  const filtered = useMemo(() => {
-    let result = users;
-    if (statusFilter !== "all") result = result.filter(u => u.status === statusFilter);
-    const q = query.trim().toLowerCase();
-    if (q) result = result.filter(u => u.name.toLowerCase().includes(q) || u.email.toLowerCase().includes(q));
-    return result;
-  }, [users, query, statusFilter]);
+  // tab counters (server-side using meta.total with tiny queries)
+  const [allCount, setAllCount] = useState(0);
+  const [activeCount, setActiveCount] = useState(0);
+  const [nonActiveCount, setNonActiveCount] = useState(0);
 
-  const totalItems = filtered.length;
-  const startIndex = (currentPage - 1) * itemsPerPage;
-  const endIndex = startIndex + itemsPerPage;
-  const currentUsers = filtered.slice(startIndex, endIndex);
+  const debouncedQuery = useDebounced(query, 400);
 
-  useEffect(() => setCurrentPage(1), [query, statusFilter]);
+  const router = useRouter();
+
+  // reset ke page 1 saat filter/search/perPage berubah
+  useEffect(
+    () => setCurrentPage(1),
+    [debouncedQuery, statusFilter, itemsPerPage]
+  );
+
+  // fetch list (index) dari API proxy Next.js → Laravel
+  useEffect(() => {
+    let mounted = true;
+    const ac = new AbortController();
+
+    async function loadList() {
+      setLoading(true);
+      setError(null);
+
+      try {
+        const params = new URLSearchParams();
+        params.set("per_page", String(itemsPerPage));
+        params.set("page", String(currentPage));
+        // Laravel expects: status=active|inactive|all
+        const laravelStatus =
+          statusFilter === "all"
+            ? "all"
+            : statusFilter === "active"
+            ? "active"
+            : "inactive";
+        params.set("status", laravelStatus);
+        if (debouncedQuery) params.set("search", debouncedQuery);
+
+        const res = await fetch(`/api/users?${params.toString()}`, {
+          method: "GET",
+          headers: { Accept: "application/json" },
+          cache: "no-store",
+          signal: ac.signal,
+        });
+
+        if (!mounted) return;
+
+        if (!res.ok) {
+          const j = (await res
+            .json()
+            .catch(() => null)) as Partial<UsersIndexResponse> | null;
+          throw new Error(j?.message || `Request failed with ${res.status}`);
+        }
+
+        const payload = (await res.json()) as UsersIndexResponse;
+        setRows(payload.data ?? []);
+        setMeta(payload.meta ?? null);
+      } catch (e: any) {
+        if (!mounted || e?.name === "AbortError") return;
+        setError(e?.message || "Failed to load users");
+        setRows([]);
+        setMeta(null);
+      } finally {
+        if (mounted) setLoading(false);
+      }
+    }
+
+    loadList();
+    return () => {
+      mounted = false;
+      ac.abort();
+    };
+  }, [debouncedQuery, statusFilter, currentPage, itemsPerPage]);
+
+  // fetch counters untuk tab (pakai per_page=1 agar ringan). Counter mengikuti current search.
+  useEffect(() => {
+    let mounted = true;
+    const controller = new AbortController();
+
+    async function fetchCount(statusParam: "all" | "active" | "inactive") {
+      const p = new URLSearchParams();
+      p.set("per_page", "1");
+      p.set("page", "1");
+      p.set("status", statusParam);
+      if (debouncedQuery) p.set("search", debouncedQuery);
+
+      const r = await fetch(`/api/users?${p.toString()}`, {
+        method: "GET",
+        headers: { Accept: "application/json" },
+        cache: "no-store",
+        signal: controller.signal,
+      });
+      if (!r.ok) throw new Error("count error");
+      const j = (await r.json()) as UsersIndexResponse;
+      return j.meta?.total ?? 0;
+    }
+
+    (async () => {
+      try {
+        const [tAll, tAct, tInact] = await Promise.all([
+          fetchCount("all"),
+          fetchCount("active"),
+          fetchCount("inactive"),
+        ]);
+        if (!mounted) return;
+        setAllCount(tAll);
+        setActiveCount(tAct);
+        setNonActiveCount(tInact);
+      } catch {
+        /* ignore counters error */
+      }
+    })();
+
+    return () => {
+      mounted = false;
+      controller.abort();
+    };
+  }, [debouncedQuery]);
+
+  // rows → UI adapter
+  const currentUsers = useMemo(
+    () =>
+      rows.map((u) => ({
+        id: u.id,
+        name: u.name,
+        email: u.email,
+        uiStatus: mapBoolToUi(Boolean(u.status)) as UiStatus,
+      })),
+    [rows]
+  );
+
+  const totalItems = meta?.total ?? 0;
 
   const handleEdit = (id: number) => {
-    console.log("Edit user:", id);
-    window.location.href = `/users/edit?id=${id}`;
+    router.push(`/users/edit/${id}`);
   };
-  const handleDelete = (id: number) => console.log("Delete user:", id);
-  const handleNewUser = () => window.location.href = '/users/create';
-
-  const allCount = users.length;
-  const activeCount = users.filter(u => u.status === "active").length;
-  const nonActiveCount = users.filter(u => u.status === "non-active").length;
+  const handleDelete = (id: number) => {
+    // rekomendasi: panggil DELETE /api/v1/users/{id} melalui route handler /api/users/[id] (bisa ditambah nanti)
+    console.log("Delete user:", id);
+  };
+  const handleNewUser = () => (window.location.href = "/users/create");
 
   return (
     <div className="min-h-full">
@@ -124,21 +269,53 @@ export default function UsersPage() {
                   placeholder="Search"
                   className="w-56 rounded-lg border border-gray-300 py-2 pl-9 pr-3 text-sm text-black placeholder:text-gray-400 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-blue-500"
                 />
-                <svg className="absolute left-3 top-2.5 h-4 w-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                <svg
+                  className="absolute left-3 top-2.5 h-4 w-4 text-gray-400"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
+                  />
                 </svg>
               </div>
 
               <button className="relative inline-flex items-center justify-center rounded-md border border-gray-200 p-2 text-gray-500 hover:bg-gray-50">
-                <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-                  <path strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" d="M15 17h5l-1.4-1.4A2 2 0 0 1 18 14.2V11a6 6 0 1 0-12 0v3.2c0 .53-.21 1.05-.6 1.44L4 17h5m6 0v1a3 3 0 1 1-6 0v-1h6z"/>
+                <svg
+                  className="h-4 w-4"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                >
+                  <path
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    d="M15 17h5l-1.4-1.4A2 2 0 0 1 18 14.2V11a6 6 0 1 0-12 0v3.2c0 .53-.21 1.05-.6 1.44L4 17h5m6 0v1a3 3 0 1 1-6 0v-1h6z"
+                  />
                 </svg>
-                <span className="absolute -right-1 -top-1 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-amber-500 px-1 text-[10px] font-semibold text-white">0</span>
+                <span className="absolute -right-1 -top-1 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-amber-500 px-1 text-[10px] font-semibold text-white">
+                  0
+                </span>
               </button>
 
               <button className="inline-flex items-center justify-center rounded-md border border-gray-200 p-2 text-gray-500 hover:bg-gray-50">
-                <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-                  <path strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" d="M3 5h18M6 12h12M10 19h4" />
+                <svg
+                  className="h-4 w-4"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                >
+                  <path
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    d="M3 5h18M6 12h12M10 19h4"
+                  />
                 </svg>
               </button>
             </div>
@@ -146,7 +323,6 @@ export default function UsersPage() {
             {/* Table */}
             <div className="overflow-x-auto">
               <table className="min-w-full table-fixed divide-y divide-gray-200">
-                {/* Fixed column widths to prevent shifting */}
                 <colgroup>
                   <col className="w-[32%]" />
                   <col className="w-[38%]" />
@@ -162,11 +338,9 @@ export default function UsersPage() {
                     <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
                       Email
                     </th>
-                    {/* right-aligned header for Status */}
                     <th className="px-6 py-3 text-right text-xs font-medium uppercase tracking-wider text-gray-500">
                       Status
                     </th>
-                    {/* right-aligned header for Actions */}
                     <th className="px-6 py-3 text-right text-xs font-medium uppercase tracking-wider text-gray-500">
                       Actions
                     </th>
@@ -174,53 +348,82 @@ export default function UsersPage() {
                 </thead>
 
                 <tbody className="bg-white divide-y divide-gray-200">
-                  {currentUsers.map((user) => (
-                    <tr key={user.id} className="hover:bg-gray-50">
-                      {/* Name (truncate so it can't push columns) */}
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        <div className="max-w-[280px] truncate text-sm font-medium text-gray-900">
-                          {user.name}
-                        </div>
-                      </td>
-
-                      {/* Email (truncate) */}
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        <div className="max-w-[360px] truncate text-sm text-gray-900">
-                          {user.email}
-                        </div>
-                      </td>
-
-                      {/* Status — flush right */}
-                      <td className="px-6 py-4 whitespace-nowrap text-right">
-                        <div className="flex justify-end">
-                          <StatusBadge status={user.status} />
-                        </div>
-                      </td>
-
-                      {/* Actions — flush right */}
-                      <td className="px-6 py-4 whitespace-nowrap text-right">
-                        <div className="flex items-center justify-end gap-4">
-                          <EditButton onClick={() => handleEdit(user.id)} />
-                          <DeleteButton onClick={() => handleDelete(user.id)} />
-                        </div>
+                  {loading ? (
+                    Array.from({ length: itemsPerPage }).map((_, i) => (
+                      <tr key={`skeleton-${i}`} className="animate-pulse">
+                        <td className="px-6 py-4">
+                          <div className="h-4 w-40 rounded bg-gray-200" />
+                        </td>
+                        <td className="px-6 py-4">
+                          <div className="h-4 w-56 rounded bg-gray-200" />
+                        </td>
+                        <td className="px-6 py-4 text-right">
+                          <div className="ml-auto h-4 w-20 rounded bg-gray-200" />
+                        </td>
+                        <td className="px-6 py-4 text-right">
+                          <div className="ml-auto h-4 w-16 rounded bg-gray-200" />
+                        </td>
+                      </tr>
+                    ))
+                  ) : rows.length === 0 ? (
+                    <tr>
+                      <td
+                        colSpan={4}
+                        className="px-6 py-10 text-center text-sm text-gray-500"
+                      >
+                        {error ? "Unable to load users" : "No users found"}
                       </td>
                     </tr>
-                  ))}
+                  ) : (
+                    currentUsers.map((user) => (
+                      <tr key={user.id} className="hover:bg-gray-50">
+                        <td className="px-6 py-4 whitespace-nowrap">
+                          <div className="max-w-[280px] truncate text-sm font-medium text-gray-900">
+                            {user.name}
+                          </div>
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap">
+                          <div className="max-w-[360px] truncate text-sm text-gray-900">
+                            {user.email}
+                          </div>
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-right">
+                          <div className="flex justify-end">
+                            <StatusBadge status={user.uiStatus} />
+                          </div>
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-right">
+                          <div className="flex items-center justify-end gap-4">
+                            <EditButton onClick={() => handleEdit(user.id)} />
+                            <DeleteButton
+                              onClick={() => handleDelete(user.id)}
+                            />
+                          </div>
+                        </td>
+                      </tr>
+                    ))
+                  )}
                 </tbody>
               </table>
             </div>
 
-            {/* Footer */}
+            {/* Footer: pagination (server-side) */}
             <div className="border-t border-gray-200 px-4 py-3">
               <Pagination
                 totalItems={totalItems}
-                page={currentPage}
-                pageSize={itemsPerPage}
+                page={meta?.current_page ?? currentPage}
+                pageSize={meta?.per_page ?? itemsPerPage}
                 onPageChange={setCurrentPage}
                 onPageSizeChange={setItemsPerPage}
                 pageSizeOptions={[3, 10, 25, 50]}
               />
             </div>
+
+            {error && (
+              <div className="border-t border-red-100 bg-red-50 px-4 py-3 text-sm text-red-600">
+                {error}
+              </div>
+            )}
           </div>
         </div>
       </div>

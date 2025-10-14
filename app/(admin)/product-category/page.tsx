@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState, useCallback } from "react";
 import { NewNounButton } from "@/components/ui/AddButton";
 import { EditButton } from "@/components/ui/EditIcon";
 import { DeleteButton } from "@/components/ui/DeleteIcon";
@@ -20,6 +20,13 @@ type ApiCategory = {
   status?: boolean;
   cover?: string | null;
   cover_url?: string | null;
+  parent_brief?: ParentBrief | null;
+};
+
+type ParentBrief = {
+  id: number;
+  slug: string;
+  name?: { id?: string; en?: string };
 };
 
 export default function ProductCategoryPage() {
@@ -36,25 +43,37 @@ export default function ProductCategoryPage() {
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage, setItemsPerPage] = useState(10);
 
-  useEffect(() => {
-    let mounted = true;
-    (async () => {
-      setLoading(true);
-      setError(null);
-      try {
-        const res = await api.get("/categories", { params: { per_page: 100 } });
-        const data = res.data?.data ?? [];
-        if (mounted) setCategories(Array.isArray(data) ? data : []);
-      } catch (e: any) {
-        setError(e?.response?.data?.message || e?.message || "Failed to fetch categories");
-      } finally {
-        setLoading(false);
-      }
-    })();
-    return () => {
-      mounted = false;
-    };
+  // =============== FETCH HELPER (bisa di-refetch kapan pun) ===============
+  const loadCategories = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await api.get("/categories", { params: { per_page: 100, status: "all" } });
+      const data = res.data?.data ?? [];
+      setCategories(Array.isArray(data) ? data : []);
+    } catch (e: any) {
+      setError(e?.response?.data?.message || e?.message || "Failed to fetch categories");
+    } finally {
+      setLoading(false);
+    }
   }, []);
+
+  // awal mount
+  useEffect(() => {
+    loadCategories();
+  }, [loadCategories]);
+
+  // refetch saat tab fokus / kembali dari bfcache
+  useEffect(() => {
+    const onFocus = () => loadCategories();
+    const onPageShow = (e: PageTransitionEvent) => { if ((e as any).persisted) loadCategories(); };
+    window.addEventListener("focus", onFocus);
+    window.addEventListener("pageshow", onPageShow as any);
+    return () => {
+      window.removeEventListener("focus", onFocus);
+      window.removeEventListener("pageshow", onPageShow as any);
+    };
+  }, [loadCategories]);
 
   // ====== data processing: search + filter + sort ======
   const processed = useMemo(() => {
@@ -91,13 +110,21 @@ export default function ProductCategoryPage() {
 
   const handleNewCategory = () => router.push('/product-category/create');
   const handleEdit = (id: number) => router.push(`/product-category/edit/${id}`);
+
+  // =============== DELETE + REFETCH ===============
   const handleDelete = async (id: number) => {
     if (!confirm('Are you sure you want to delete this category?')) return;
     try {
+      // Optimistic (opsional, biar langsung hilang):
+      setCategories(prev => prev.filter(c => c.id !== id));
+
       await api.delete(`/categories/${id}`);
-      setCategories((prev) => prev.filter((c) => c.id !== id));
+
+      // Hard refetch supaya sinkron dengan server (wajib untuk kasus lain):
+      await loadCategories();
     } catch (e: any) {
       alert(e?.response?.data?.message || e?.message || 'Failed to delete');
+      // rollback jika perlu (opsional): await loadCategories();
     }
   };
 
@@ -295,7 +322,7 @@ export default function ProductCategoryPage() {
                         <div className="max-w-xs truncate text-sm font-medium text-gray-900">{category.name_text || category.name?.id || category.name?.en || '-'}</div>
                       </td>
                       <td className="hidden whitespace-nowrap px-3 py-4 text-sm text-gray-900 sm:table-cell sm:px-6">
-                        {category.parent_id ?? "-"}
+                        {category.parent_brief?.slug ?? "-"}
                       </td>
                       <td className="whitespace-nowrap px-3 py-4 sm:px-6">
                         <div className="flex items-center gap-3 sm:gap-4">

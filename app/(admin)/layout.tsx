@@ -7,13 +7,9 @@ import { Topbar } from '@/components/layout/Topbar';
 import { useAuth } from '@/components/providers/AuthProvider';
 import { getCookie as getCookieUtil, deleteCookie as deleteCookieUtil } from '@/lib/cookies';
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || '';
+const API_BASE = (process.env.NEXT_PUBLIC_API_URL || '').replace(/\/$/, '');
 
-export default function DashboardLayout({
-  children,
-}: {
-  children: React.ReactNode;
-}) {
+export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const { user, token, setAuth, clearAuth } = useAuth();
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -22,41 +18,67 @@ export default function DashboardLayout({
 
   useEffect(() => {
     let cancelled = false;
-    const token = getCookieUtil('access_token');
-    console.log('==token', token);
-    if (!token) {
-      router.replace('/auth/login');
-      return;
-    }
 
-    (async () => {
+    const verify = async () => {
+      // 1) selalu ambil token dari cookie (persist setelah refresh)
+      const t = getCookieUtil('access_token');
+
+      // Tidak ada token → selesai checking dulu, baru redirect
+      if (!t) {
+        if (!cancelled) {
+          setChecking(false);
+          router.replace('/auth/login');
+        }
+        return;
+      }
+
       try {
+        // 2) verifikasi token
         const res = await fetch(`${API_BASE}/user`, {
-          headers: { Authorization: `Bearer ${token}` },
+          headers: { Authorization: `Bearer ${t}` },
           cache: 'no-store',
         });
-        if (!res.ok) throw new Error('Invalid token');
-        const user = await res.json();
+
+        // 401/403 → memang tidak valid → hapus cookie & login lagi
+        if (res.status === 401 || res.status === 403) {
+          deleteCookieUtil('access_token');
+          clearAuth();
+          if (!cancelled) {
+            setChecking(false);
+            router.replace('/auth/login');
+          }
+          return;
+        }
+
+        // Error lain (404/5xx/network) → JANGAN hapus token; tampilkan error saja
+        if (!res.ok) {
+          const msg = `Auth check failed (${res.status})`;
+          if (!cancelled) {
+            setError(msg);
+            setChecking(false);
+          }
+          return;
+        }
+
+        const me = await res.json();
         if (!cancelled) {
-          setAuth({ user, token });
+          setAuth({ user: me, token: t });
           setChecking(false);
         }
       } catch (e: any) {
-        // clear cookie and redirect to login
-        deleteCookieUtil('access_token');
-        clearAuth();
+        // Network error → jangan drop token
         if (!cancelled) {
-          setError(e?.message || 'Unauthorized');
-          router.replace('/auth/login');
+          setError(e?.message || 'Network error');
+          setChecking(false);
         }
       }
-    })();
-    return () => {
-      cancelled = true;
     };
+
+    verify();
+    return () => { cancelled = true; };
   }, [router, setAuth, clearAuth]);
 
-  const toggleSidebar = () => setSidebarOpen((v) => !v);
+  const toggleSidebar = () => setSidebarOpen(v => !v);
   const closeSidebar = () => setSidebarOpen(false);
 
   const onLogout = async () => {
@@ -76,9 +98,7 @@ export default function DashboardLayout({
   };
 
   if (checking) {
-    return (
-      <div className="flex h-screen items-center justify-center text-gray-600">Loading...</div>
-    );
+    return <div className="flex h-screen items-center justify-center text-gray-600">Loading...</div>;
   }
 
   return (
@@ -97,5 +117,3 @@ export default function DashboardLayout({
     </div>
   );
 }
-
-// cookie helpers moved to @/lib/cookies
