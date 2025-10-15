@@ -35,9 +35,11 @@ export default function CreateProductPage() {
   const [submitting, setSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
-  // 🆕 Tambahkan state untuk bahasa
+
+  // Bahasa UI untuk input bilingual
   const [language, setLanguage] = useState<"id" | "en">("en");
 
+  // --- FORM STATE ---
   const [formData, setFormData] = useState({
     name: "",
     slug: "",
@@ -50,7 +52,7 @@ export default function CreateProductPage() {
     seoDescription: "",
     featured: false,
     status: true,
-    heel_height_cm: "", // ← tambahkan ini
+    heel_height_cm: "",
   });
 
   const [galleries, setGalleries] = useState<Gallery[]>([]);
@@ -61,12 +63,12 @@ export default function CreateProductPage() {
   );
   const [singlePrice, setSinglePrice] = useState("");
 
-  // ── NEW: harga per kelompok (satu dimensi varian saja)
+  // ── harga per 1 dimensi (group)
   const [groupPrices, setGroupPrices] = useState<{ [group: string]: string }>(
     {}
   );
 
-  // Harga per kombinasi (≥2 dimensi varian)
+  // ── harga per kombinasi (≥2 dimensi)
   const [individualPrices, setIndividualPrices] = useState<{
     [key: string]: string;
   }>({});
@@ -76,13 +78,18 @@ export default function CreateProductPage() {
     Record<string, Record<string, boolean>>
   >({});
 
+  // ── 🆕 Promotion Product (optional)
+  const [promotionProduct, setPromotionProduct] = useState<{
+    value: number;
+    label: string;
+  } | null>(null);
+
   const isGroupOpen = (first: string) => openGroups[first] !== false; // undefined => open
   const toggleGroup = (first: string) =>
     setOpenGroups((prev) => ({ ...prev, [first]: !isGroupOpen(first) }));
 
   const isSubOpen = (first: string, second: string) =>
     openSubGroups[first]?.[second] ?? true;
-
   const toggleSub = (first: string, second: string) =>
     setOpenSubGroups((prev) => ({
       ...prev,
@@ -114,21 +121,18 @@ export default function CreateProductPage() {
     return Number.isFinite(numeric) ? numeric : null;
   };
 
-  // const isRealGalleryImage = (src: string) => Boolean(src && !src.startsWith("/api/placeholder"));
-
   const handleCreate = async () => {
     setErrorMessage(null);
     setSuccessMessage(null);
 
-    // const name = formData.name.trim();
-    // const description = formData.description.trim();
     const slug = formData.slug.trim();
-
     const categoryId = formData.category_id;
+
     const name_id = (formData as any).name_id?.trim() || "";
     const name_en = (formData as any).name_en?.trim() || "";
     const description_id = (formData as any).description_id?.trim() || "";
     const description_en = (formData as any).description_en?.trim() || "";
+
     const errors: string[] = [];
     if (!name_en) errors.push("Nama produk wajib diisi.");
     if (!slug) errors.push("Slug wajib diisi.");
@@ -136,11 +140,6 @@ export default function CreateProductPage() {
     if (!categoryId) errors.push("Kategori wajib dipilih.");
 
     const pricingMode = pricingType === "single" ? "single" : "per_variant";
-    // const rootPriceValue =
-    //   pricingMode === "single"
-    //     ? parseNumber(singlePrice || formData.price)
-    //     : parseNumber(formData.price);
-
     const rootPriceValue = parseNumber(formData.price);
 
     if (pricingMode === "single" && rootPriceValue == null) {
@@ -149,10 +148,6 @@ export default function CreateProductPage() {
 
     const validVariants = getValidVariants();
     const variantCombinations = generateVariantCombinations();
-
-    // if (pricingMode === "per_variant" && validVariants.length === 0) {
-    //   errors.push("Tambahkan minimal satu varian untuk menggunakan harga per kombinasi.");
-    // }
 
     if (
       pricingMode === "per_variant" &&
@@ -176,10 +171,6 @@ export default function CreateProductPage() {
       fd.append("category_id", String(categoryId));
       fd.append("pricing_mode", pricingMode);
       fd.append("featured", formData.featured ? "1" : "0");
-      //   fd.append("name[id]", name);
-      //   fd.append("name[en]", name);
-      //   fd.append("description[id]", description);
-      //   fd.append("description[en]", description);
 
       fd.append("name[id]", name_id);
       fd.append("name[en]", name_en);
@@ -197,13 +188,6 @@ export default function CreateProductPage() {
         fd.append(`seo_tags[${index}]`, tag);
       });
 
-      //   if (formData.keyword.trim()) {
-      //     fd.append("seo_keyword", formData.keyword.trim());
-      //   }
-      //   if (formData.seoDescription.trim()) {
-      //     fd.append("seo_description", formData.seoDescription.trim());
-      //   }
-
       const keyword_id = (formData as any).keyword_id?.trim() || "";
       const keyword_en = (formData as any).keyword_en?.trim() || "";
       const seoDesc_id = (formData as any).seoDescription_id?.trim() || "";
@@ -213,6 +197,11 @@ export default function CreateProductPage() {
       if (keyword_en) fd.append("seo_keyword[en]", keyword_en);
       if (seoDesc_id) fd.append("seo_description[id]", seoDesc_id);
       if (seoDesc_en) fd.append("seo_description[en]", seoDesc_en);
+
+      // ── 🆕 2.5 Promotion Product (optional)
+      if (promotionProduct?.value) {
+        fd.append("promotion_product_id", String(promotionProduct.value));
+      }
 
       // ── 3️⃣ Harga Single
       if (pricingMode === "single" && rootPriceValue != null) {
@@ -275,7 +264,6 @@ export default function CreateProductPage() {
             const displayFirst = opt.en || opt.id;
             const priceValue = parseNumber(groupPrices[displayFirst]);
             if (priceValue != null) {
-              // Label should be: `${variantName}: ${option}` in both languages
               const v0 = valid[0];
               const label: { id: string; en: string } = {
                 id: `${v0.name.id || v0.name.en}: ${opt.id || opt.en}`,
@@ -344,36 +332,17 @@ export default function CreateProductPage() {
         fd.append(`gallery[${i}][sort]`, String(i));
       });
 
-      try {
-        // ── 7️⃣ Kirim
-        // const res = await api.post("/products", fd as any, {
-        //   headers: { "Content-Type": "multipart/form-data" },
-        // });
-
-        const res = await api.post("/products", fd as any);
-
-        // ✅ Jika sukses
-        setSuccessMessage(res.data?.message || "Produk berhasil dibuat.");
-        setErrorMessage(null);
-
-        setTimeout(() => {
-          router.push("/products");
-        }, 800);
-      } catch (err: any) {
-        console.error("Gagal membuat produk:", JSON.stringify(err));
-
-        // Ambil pesan error dari response API (jika ada)
-        const errorMsg =
-          err.response?.data?.message ||
-          err.response?.data?.error ||
-          "Terjadi kesalahan saat membuat produk. Silakan coba lagi.";
-        console.log();
-        setErrorMessage(errorMsg);
-        setSuccessMessage(null);
-      }
       // ── 7️⃣ Kirim
-    } catch (error: any) {
-      const response = error?.response?.data;
+      const res = await api.post("/products", fd as any);
+      setSuccessMessage(res.data?.message || "Produk berhasil dibuat.");
+      setErrorMessage(null);
+
+      setTimeout(() => {
+        router.push("/products");
+      }, 800);
+    } catch (err: any) {
+      console.error("Gagal membuat produk:", JSON.stringify(err));
+      const response = err?.response?.data;
       if (response?.errors) {
         const messages = Object.values(response.errors)
           .flat()
@@ -384,14 +353,20 @@ export default function CreateProductPage() {
             : response.message || "Gagal membuat produk."
         );
       } else {
-        setErrorMessage(
-          response?.message || error?.message || "Gagal membuat produk."
-        );
+        const errorMsg =
+          err.response?.data?.message ||
+          err.response?.data?.error ||
+          response?.message ||
+          err?.message ||
+          "Terjadi kesalahan saat membuat produk. Silakan coba lagi.";
+        setErrorMessage(errorMsg);
       }
+      setSuccessMessage(null);
     } finally {
       setSubmitting(false);
     }
   };
+
   const handleCancel = () => {
     router.push("/products");
   };
@@ -437,6 +412,24 @@ export default function CreateProductPage() {
           cat.slug ||
           `Category ${cat.id}`,
         image: cat.cover_url,
+      }));
+    } catch {
+      return [];
+    }
+  }, []);
+
+  // ── 🆕 Loader opsi Promotion Product
+  const loadPromotionOptions = useCallback(async (inputValue: string) => {
+    try {
+      const res = await api.get<{ status: string; data: any[] }>(`/products`, {
+        params: { status: "publish", per_page: 100, search: inputValue },
+      });
+      const list = (res as any)?.data?.data || [];
+      return list.map((p: any) => ({
+        value: p.id,
+        label:
+          (p.name && (p.name.id || p.name.en)) || p.slug || `Product ${p.id}`,
+        image: p.cover_url,
       }));
     } catch {
       return [];
@@ -571,7 +564,7 @@ export default function CreateProductPage() {
       <div className="bg-white border-b border-gray-200 px-6 py-6 flex items-center justify-between">
         <h1 className="text-2xl font-semibold text-gray-900">New Product</h1>
 
-        {/* 🆕 Language selector */}
+        {/* Language selector */}
         <div className="flex items-center gap-2">
           <label
             htmlFor="language"
@@ -794,7 +787,7 @@ export default function CreateProductPage() {
                   />
                 </div>
 
-                {/* Base Price (opsional / tidak dipakai untuk varian) */}
+                {/* Base Price */}
                 <div className="mb-6">
                   <label
                     htmlFor="price"
@@ -834,6 +827,7 @@ export default function CreateProductPage() {
                   />
                 </div>
               </div>
+
               <ProductGallery
                 galleries={galleries}
                 onAddGallery={handleAddGallery}
@@ -1005,19 +999,19 @@ export default function CreateProductPage() {
                         </label>
 
                         {/* {pricingType === "single" && (
-                                                    <div className="ml-6">
-                                                        <div className="flex items-center gap-2">
-                                                            <span className="text-sm text-gray-600">Price (Rp)</span>
-                                                            <input
-                                                                type="number"
-                                                                value={singlePrice}
-                                                                onChange={(e) => setSinglePrice(e.target.value)}
-                                                                className="px-3 py-1 border border-gray-300 rounded text-sm text-black w-32"
-                                                                min={0}
-                                                            />
-                                                        </div>
-                                                    </div>
-                                                )} */}
+                          <div className="ml-6">
+                            <div className="flex items-center gap-2">
+                              <span className="text-sm text-gray-600">Price (Rp)</span>
+                              <input
+                                type="number"
+                                value={singlePrice}
+                                onChange={(e) => setSinglePrice(e.target.value)}
+                                className="px-3 py-1 border border-gray-300 rounded text-sm text-black w-32"
+                                min={0}
+                              />
+                            </div>
+                          </div>
+                        )} */}
 
                         <label className="flex items-center gap-3">
                           <input
@@ -1039,7 +1033,7 @@ export default function CreateProductPage() {
                       </div>
                     </div>
 
-                    {/* Harga per KELOMPOK (muncul hanya saat 1 dimensi varian) */}
+                    {/* Harga per KELOMPOK (1 dimensi) */}
                     {pricingType === "individual" &&
                       validVariantCount === 1 && (
                         <div className="space-y-4">
@@ -1049,7 +1043,6 @@ export default function CreateProductPage() {
                                 key={firstOption}
                                 className="border border-gray-200 rounded-lg"
                               >
-                                {/* Header level-1 */}
                                 <div className="bg-gray-50 px-4 py-3 border-b border-gray-200 flex items-center justify-between">
                                   <h5 className="font-medium text-gray-900">
                                     {firstOption}
@@ -1080,7 +1073,6 @@ export default function CreateProductPage() {
                                   </button>
                                 </div>
 
-                                {/* Body level-1 */}
                                 {isGroupOpen(firstOption) && (
                                   <div className="p-4">
                                     <div className="flex items-center gap-3 text-sm">
@@ -1107,7 +1099,7 @@ export default function CreateProductPage() {
                         </div>
                       )}
 
-                    {/* Harga per KOMBINASI (muncul saat ≥2 dimensi varian) */}
+                    {/* Harga per KOMBINASI (≥2 dimensi) */}
                     {pricingType === "individual" && validVariantCount >= 2 && (
                       <div className="space-y-4">
                         {Object.entries(groupedCombinations()).map(
@@ -1116,7 +1108,6 @@ export default function CreateProductPage() {
                               key={firstOption}
                               className="border border-gray-200 rounded-lg"
                             >
-                              {/* Header level-1 */}
                               <div className="bg-gray-50 px-4 py-3 border-b border-gray-200 flex items-center justify-between">
                                 <h5 className="font-medium text-gray-900">
                                   {firstOption}
@@ -1147,7 +1138,6 @@ export default function CreateProductPage() {
                                 </button>
                               </div>
 
-                              {/* Body level-1 */}
                               {isGroupOpen(firstOption) && (
                                 <div className="p-4">
                                   {Array.from(
@@ -1156,7 +1146,6 @@ export default function CreateProductPage() {
                                     .filter(Boolean)
                                     .map((secondOption) => (
                                       <div key={secondOption} className="mb-4">
-                                        {/* Sub-header level-2 */}
                                         <div className="bg-gray-100 px-3 py-2 border border-gray-200 rounded flex items-center justify-between">
                                           <h6 className="font-medium text-gray-800">
                                             {secondOption}
@@ -1195,7 +1184,6 @@ export default function CreateProductPage() {
                                           </button>
                                         </div>
 
-                                        {/* Body level-2 */}
                                         {isSubOpen(
                                           firstOption,
                                           String(secondOption)
@@ -1206,7 +1194,6 @@ export default function CreateProductPage() {
                                                 (c) => c[1] === secondOption
                                               )
                                               .map((combination, idx) => {
-                                                // Stable key based on EN values
                                                 const valid =
                                                   getValidVariants();
                                                 const enParts = combination.map(
@@ -1273,8 +1260,9 @@ export default function CreateProductPage() {
               </div>
             </div>
 
-            {/* Right - SEO */}
+            {/* Right - SEO + Promotion Product */}
             <div className="space-y-6">
+              {/* SEO Card */}
               <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
                 <h3 className="text-lg font-semibold text-gray-900 mb-6">
                   SEO
@@ -1365,6 +1353,54 @@ export default function CreateProductPage() {
                     </div>
                   ))}
                 </div>
+              </div>
+
+              {/* 🆕 Promotion Product Card */}
+              <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+                <h3 className="text-lg font-semibold text-gray-900 mb-6">
+                  Promotion Product
+                </h3>
+
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Promotion Product
+                </label>
+
+                <AsyncSelect
+                  cacheOptions
+                  defaultOptions
+                  isClearable
+                  loadOptions={loadPromotionOptions}
+                  placeholder="Select Promotion Product"
+                  onChange={(selected: any) => setPromotionProduct(selected)}
+                  value={promotionProduct}
+                  formatOptionLabel={(option: any) => (
+                    <div className="flex items-center gap-2">
+                      {option.image && (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img
+                          src={option.image}
+                          alt={option.label}
+                          className="w-6 h-6 rounded object-cover"
+                        />
+                      )}
+                      <span>{option.label}</span>
+                    </div>
+                  )}
+                  styles={{
+                    control: (base: any) => ({
+                      ...base,
+                      borderRadius: "0.75rem",
+                      borderColor: "#e5e7eb",
+                      padding: "2px",
+                      minHeight: "44px",
+                    }),
+                    valueContainer: (base: any) => ({
+                      ...base,
+                      padding: "0 10px",
+                    }),
+                    placeholder: (base: any) => ({ ...base, color: "#6b7280" }),
+                  }}
+                />
               </div>
             </div>
           </div>

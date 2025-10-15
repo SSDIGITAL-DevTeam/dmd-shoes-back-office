@@ -228,50 +228,6 @@ export default function CustomersPage() {
                 </svg>
               )}
             </div>
-
-            {/* ikon filter (dummy UI agar mirip mockup) */}
-            <button
-              type="button"
-              className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-gray-200 text-gray-500 hover:bg-gray-50"
-              aria-label="Filter"
-              title="Filter"
-            >
-              <svg
-                className="h-4 w-4"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-              >
-                <path
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  d="M3 5h18M6 12h12M10 19h4"
-                />
-              </svg>
-            </button>
-
-            {/* ikon tampilan list/grid (dummy) */}
-            <button
-              type="button"
-              className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-gray-200 text-gray-500 hover:bg-gray-50"
-              aria-label="Toggle view"
-              title="Toggle view"
-            >
-              <svg
-                className="h-4 w-4"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-              >
-                <path
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  d="M4 6h16M4 12h16M4 18h16"
-                />
-              </svg>
-            </button>
           </div>
 
           {/* Table */}

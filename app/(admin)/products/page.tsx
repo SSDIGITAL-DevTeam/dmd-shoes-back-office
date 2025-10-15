@@ -2,418 +2,262 @@
 
 import React, { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { NewNounButton } from "@/components/ui/AddButton";
+import { Pagination } from "@/components/layout/Pagination";
 import { StatusBadge } from "@/components/ui/StatusBadge";
+import { NewNounButton } from "@/components/ui/AddButton";
+import {
+  listProducts,
+  type ProductItem,
+  type ProductsResponse,
+  safeText,
+} from "@/services/products.service";
 import { EditButton } from "@/components/ui/EditIcon";
 import { DeleteButton } from "@/components/ui/DeleteIcon";
-import { Pagination } from "@/components/layout/Pagination";
-import api from "@/lib/fetching";
-import {
-  ApiProduct,
-  fetchProducts,
-  ProductListParams,
-  ProductListResponse,
-} from "./services/productService";
 
-type SortField = "name" | "price" | "created_at";
-type SortDirection = "asc" | "desc";
-type StatusFilter = "all" | "active" | "inactive";
+/** ======================
+ *  Locale (sesuaikan)
+ *  ====================== */
+type Locale = "id" | "en";
+const currentLocale: Locale = "id";
 
-type CategoryOption = {
-  value: string;
-  label: string;
-};
+/** ======================
+ *  Filter & Status
+ *  ====================== */
+type StatusFilter = "all" | "active" | "inactive" | "publish" | "draft";
 
-type ProductMeta = {
-  current_page: number;
-  per_page: number;
-  total: number;
-  last_page: number;
-};
+/** badge status union mengikuti komponen StatusBadge */
+type BadgeStatus = "draft" | "active" | "publish" | "non-active";
 
-type DisplayProduct = {
-  id: number;
-  name: string;
-  priceLabel: string;
-  status: "draft" | "active" | "publish" | "non-active";
-  categoryName: string;
-  coverUrl: string;
-  gallery?: ApiProduct["gallery"];
-};
+/** Ubah apapun dari API jadi union untuk StatusBadge */
+function resolveBadgeStatus(input: unknown): BadgeStatus {
+  if (input === true || input === 1 || input === "1") return "active";
+  if (input === false || input === 0 || input === "0") return "non-active";
 
-const DEFAULT_META: ProductMeta = {
-  current_page: 1,
-  per_page: 12,
- // per_page: 2,
-  total: 0,
-  last_page: 1,
-};
-
-const SORT_OPTIONS: { label: string; value: SortField }[] = [
-  { label: "Nama", value: "name" },
-  { label: "Harga", value: "price" },
-  { label: "Tanggal dibuat", value: "created_at" },
-];
-
-const STATUS_FILTER_OPTIONS: { label: string; value: StatusFilter }[] = [
-  { label: "All", value: "all" },
-  { label: "Active", value: "active" },
-  { label: "Inactive", value: "inactive" },
-];
-
-const DEFAULT_PAGE_SIZE_OPTIONS = [12, 24, 48];
-
-const STORAGE_BASE = (process.env.NEXT_PUBLIC_STORAGE_URL || "").replace(/\/$/, "");
-const PLACEHOLDER = "/api/placeholder/50/50";
-
-function useDebounce<T>(value: T, delay = 500) {
-  const [debounced, setDebounced] = useState(value);
-
-  useEffect(() => {
-    const timer = window.setTimeout(() => setDebounced(value), delay);
-    return () => window.clearTimeout(timer);
-  }, [value, delay]);
-
-  return debounced;
+  const str = String(input ?? "")
+    .trim()
+    .toLowerCase();
+  if (str === "active") return "active";
+  if (str === "inactive" || str === "non-active" || str === "non active")
+    return "non-active";
+  if (str === "publish") return "publish";
+  if (str === "draft") return "draft";
+  return "non-active";
 }
+
+/** ======================
+ *  Helpers
+ *  ====================== */
+const STORAGE_BASE = (process.env.NEXT_PUBLIC_STORAGE_URL || "").replace(
+  /\/$/,
+  ""
+);
+const PLACEHOLDER = "/api/placeholder/50/50";
 
 function toImageUrl(raw?: string | null) {
   if (!raw) return PLACEHOLDER;
   if (/^https?:\/\//i.test(raw)) return raw;
-  if (STORAGE_BASE) {
-    return `${STORAGE_BASE}/${String(raw).replace(/^\/+/, "")}`;
-  }
+  if (STORAGE_BASE) return `${STORAGE_BASE}/${String(raw).replace(/^\/+/, "")}`;
   return String(raw).startsWith("/") ? raw : `/${raw}`;
 }
 
-function resolveStatus(value: ApiProduct["status"]):
-  | "draft"
-  | "active"
-  | "publish"
-  | "non-active" {
-  if (value === "draft" || value === "publish") return value;
-  if (value === true || value === "1") return "active";
-  if (typeof value === "string") {
-    const normalized = value.toLowerCase();
-    if (normalized === "active") return "active";
-    if (normalized === "publish") return "publish";
-    if (normalized === "draft") return "draft";
-    if (["inactive", "non-active", "non active", "0"].includes(normalized)) {
-      return "non-active";
-    }
-  }
-  return "non-active";
+function useDebounce<T>(value: T, delay = 400) {
+  const [debounced, setDebounced] = useState(value);
+  useEffect(() => {
+    const t = window.setTimeout(() => setDebounced(value), delay);
+    return () => window.clearTimeout(t);
+  }, [value, delay]);
+  return debounced;
 }
 
-function safeNumber(value: number | string | null | undefined): number | null {
-  if (value === null || value === undefined || value === "") return null;
-  const num = typeof value === "number" ? value : Number(value);
-  return Number.isFinite(num) ? num : null;
-}
-
-function sortProductsByField(items: ApiProduct[], sortField: SortField, sortDir: SortDirection): ApiProduct[] {
-  const multiplier = sortDir === "asc" ? 1 : -1;
-  const clone = [...items];
-
-  clone.sort((a, b) => {
-    let comparison = 0;
-    if (sortField === "name") {
-      const nameA = (a.name_text || a.slug || "").toString().toLowerCase();
-      const nameB = (b.name_text || b.slug || "").toString().toLowerCase();
-      comparison = nameA.localeCompare(nameB, "id");
-    } else if (sortField === "price") {
-      const valueA =
-        safeNumber(a.price) ??
-        safeNumber(a.price_min) ??
-        safeNumber(a.variants_min_price) ??
-        0;
-      const valueB =
-        safeNumber(b.price) ??
-        safeNumber(b.price_min) ??
-        safeNumber(b.variants_min_price) ??
-        0;
-      comparison = valueA - valueB;
-    } else {
-      const dateA = Date.parse(a.created_at ?? "") || 0;
-      const dateB = Date.parse(b.created_at ?? "") || 0;
-      comparison = dateA - dateB;
-    }
-
-    if (comparison === 0) {
-      const tieBreakerA = Date.parse(a.created_at ?? "") || 0;
-      const tieBreakerB = Date.parse(b.created_at ?? "") || 0;
-      comparison = tieBreakerA - tieBreakerB;
-    }
-
-    return comparison * multiplier;
-  });
-
-  return clone;
-}
-
+/** ======================
+ *  Komponen Utama
+ *  ====================== */
 export default function ProductsPage() {
   const router = useRouter();
 
-  const [products, setProducts] = useState<ApiProduct[]>([]);
-  const [meta, setMeta] = useState<ProductMeta>(DEFAULT_META);
-  const [page, setPage] = useState<number>(1);
-  const [pageSize, setPageSize] = useState<number>(DEFAULT_META.per_page);
+  // data
+  const [rows, setRows] = useState<ProductItem[]>([]);
+  const [meta, setMeta] = useState<ProductsResponse["meta"] | null>(null);
 
-  const [searchValue, setSearchValue] = useState("");
+  // ui
+  const [loading, setLoading] = useState<boolean>(false);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  // filters & pagination
+  const [page, setPage] = useState<number>(1);
+  const [pageSize, setPageSize] = useState<number>(12);
+  const [searchValue, setSearchValue] = useState<string>("");
   const debouncedSearch = useDebounce(searchValue, 500);
-  const [categoryId, setCategoryId] = useState<string>("all");
-  const [sortField, setSortField] = useState<SortField>("created_at");
-  const [sortDir, setSortDir] = useState<SortDirection>("desc");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
 
-  const [categories, setCategories] = useState<CategoryOption[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    let active = true;
-    (async () => {
-      try {
-        const res = await api.get("/categories", {
-          params: { status: "active", per_page: 100 },
-        });
-        if (!active) return;
-        const list = Array.isArray(res.data?.data) ? res.data.data : [];
-        const mapped: CategoryOption[] = list.map((category: any) => ({
-          value: String(category.id),
-          label:
-            category.name_text ||
-            category?.name?.id ||
-            category?.name?.en ||
-            `Kategori ${category.id}`,
-        }));
-        setCategories(mapped);
-      } catch (catError) {
-        console.error("Failed to fetch categories", catError);
-      }
-    })();
-    return () => {
-      active = false;
-    };
-  }, []);
-
+  // Reset ke page 1 jika filter berubah
   useEffect(() => {
     setPage(1);
-  }, [debouncedSearch, categoryId, sortField, sortDir, statusFilter]);
+  }, [debouncedSearch, statusFilter, pageSize]);
 
   useEffect(() => {
     let mounted = true;
-
-    const loadProducts = async () => {
-      setLoading(true);
-      setError(null);
-
+    (async () => {
       try {
-        const baseParams: ProductListParams = {
-          sort: sortField,
-          dir: sortDir,
-        };
+        setLoading(true);
+        setErrorMsg(null);
 
-        if (debouncedSearch.trim()) {
-          baseParams.search = debouncedSearch.trim();
-        }
-
-        const categoryParam = categoryId !== "all" ? Number(categoryId) : undefined;
-        if (typeof categoryParam === "number" && !Number.isNaN(categoryParam)) {
-          baseParams.category_id = categoryParam;
-        }
-
+        // Saat "all", banyak backend hanya support single status.
+        // Strategi: hit 2x (active + inactive) lalu gabung manual, agar UI tetap sama seperti layout referensi.
         if (statusFilter === "all") {
+          // Ambil cukup banyak item sampai page saat ini (virtually paginate)
           const take = Math.max(page, 1) * pageSize;
-          const [activeResponse, inactiveResponse] = await Promise.all([
-            fetchProducts({ ...baseParams, status: "active", page: 1, per_page: take }),
-            fetchProducts({ ...baseParams, status: "inactive", page: 1, per_page: take }),
+
+          const [resActive, resInactive] = await Promise.all([
+            listProducts({
+              page: 1,
+              perPage: take,
+              search: debouncedSearch || undefined,
+              status: "active",
+            }),
+            listProducts({
+              page: 1,
+              perPage: take,
+              search: debouncedSearch || undefined,
+              status: "inactive",
+            }),
           ]);
 
           if (!mounted) return;
 
-          const activePayload: ProductListResponse | undefined = activeResponse?.data;
-          const inactivePayload: ProductListResponse | undefined = inactiveResponse?.data;
+          const a = Array.isArray(resActive?.data) ? resActive.data : [];
+          const b = Array.isArray(resInactive?.data) ? resInactive.data : [];
+          // Sederhana: gabung (bisa juga disort kalau backend butuh)
+          const combined = [...a, ...b];
 
-          const activeItems = Array.isArray(activePayload?.data) ? activePayload.data : [];
-          const inactiveItems = Array.isArray(inactivePayload?.data) ? inactivePayload.data : [];
-          const combined = sortProductsByField(
-            [...activeItems, ...inactiveItems],
-            sortField,
-            sortDir
-          );
-
-          const totalActive = activePayload?.meta?.total ?? activeItems.length;
-          const totalInactive = inactivePayload?.meta?.total ?? inactiveItems.length;
+          const totalActive = resActive?.meta?.total ?? a.length;
+          const totalInactive = resInactive?.meta?.total ?? b.length;
           const totalItems = totalActive + totalInactive;
 
+          // virtual paging
           const lastPage = Math.max(1, Math.ceil(totalItems / pageSize));
-          if (page > lastPage) {
-            setPage(lastPage);
-            return;
-          }
-
-          const currentPage = Math.max(page, 1);
+          const currentPage = Math.min(Math.max(page, 1), lastPage);
           const start = (currentPage - 1) * pageSize;
           const end = start + pageSize;
-          const currentSlice = combined.slice(start, end);
 
-          setProducts(currentSlice);
+          setRows(combined.slice(start, end));
           setMeta({
             current_page: currentPage,
             per_page: pageSize,
             total: totalItems,
             last_page: lastPage,
-          });
+          } as any);
         } else {
-          const response = await fetchProducts({
-            ...baseParams,
-            status: statusFilter,
+          const res = await listProducts({
             page,
-            per_page: pageSize,
+            perPage: pageSize,
+            search: debouncedSearch || undefined,
+            status: statusFilter,
           });
-
           if (!mounted) return;
-
-          const payload: ProductListResponse | undefined = response?.data;
-          const rawMeta = payload?.meta;
-          const normalizedMeta: ProductMeta = {
-            current_page: Math.max(1, rawMeta?.current_page ?? page),
-            per_page: rawMeta?.per_page ?? pageSize,
-            total: rawMeta?.total ?? (Array.isArray(payload?.data) ? payload.data.length : 0),
-            last_page: Math.max(1, rawMeta?.last_page ?? 1),
-          };
-
-          if (page > normalizedMeta.last_page) {
-            setPage(normalizedMeta.last_page);
-            return;
-          }
-
-          setProducts(Array.isArray(payload?.data) ? payload.data : []);
-          setMeta(normalizedMeta);
-
-          if (normalizedMeta.per_page !== pageSize) {
-            setPageSize(normalizedMeta.per_page);
-          }
+          setRows(Array.isArray(res.data) ? res.data : []);
+          // Normalisasi meta agar aman
+          setMeta({
+            current_page: res.meta?.current_page ?? page,
+            per_page: res.meta?.per_page ?? pageSize,
+            total:
+              res.meta?.total ??
+              (Array.isArray(res.data) ? res.data.length : 0),
+            last_page:
+              res.meta?.last_page ??
+              Math.max(
+                1,
+                Math.ceil(
+                  (res.meta?.total ?? 0) / (res.meta?.per_page ?? pageSize)
+                )
+              ),
+          } as any);
         }
-      } catch (fetchError: any) {
+      } catch (err: any) {
         if (!mounted) return;
-        const message =
-          fetchError?.response?.data?.message ||
-          fetchError?.message ||
-          "Failed to fetch products";
-        setProducts([]);
+        setRows([]);
         setMeta({
           current_page: 1,
           per_page: pageSize,
           total: 0,
           last_page: 1,
-        });
-        setError(message);
+        } as any);
+        setErrorMsg(
+          err?.response?.data?.message ||
+            err?.message ||
+            "Gagal memuat data produk. Coba lagi."
+        );
       } finally {
-        if (mounted) {
-          setLoading(false);
-        }
+        if (mounted) setLoading(false);
       }
-    };
-
-    loadProducts();
-
+    })();
     return () => {
       mounted = false;
     };
-  }, [debouncedSearch, categoryId, sortField, sortDir, statusFilter, page, pageSize]);
+  }, [page, pageSize, debouncedSearch, statusFilter]);
 
-  const categoryOptions = useMemo(
-    () => [{ value: "all", label: "Semua kategori" }, ...categories],
-    [categories]
-  );
+  const totalItems = meta?.total ?? 0;
 
-  const pageSizeOptions = useMemo(() => {
-    const merged = new Set<number>([...DEFAULT_PAGE_SIZE_OPTIONS, pageSize]);
-    return Array.from(merged).sort((a, b) => a - b);
-  }, [pageSize]);
-
-  const currencyFormatter = useMemo(
-    () =>
-      new Intl.NumberFormat("id-ID", {
-        style: "currency",
-        currency: "IDR",
-        minimumFractionDigits: 0,
-      }),
-    []
-  );
+  // Map ke bentuk display
+  type DisplayProduct = {
+    id: number | string;
+    nameText: string;
+    categoryText: string;
+    brandText: string;
+    badge: BadgeStatus;
+    coverUrl: string;
+  };
 
   const displayProducts = useMemo<DisplayProduct[]>(() => {
-    return products.map((item) => {
-      const priceNumber =
-        safeNumber(item.price) ??
-        safeNumber(item.price_min) ??
-        safeNumber(item.variants_min_price);
-      return {
-        id: item.id,
-        name: item.name_text || item.slug || `Produk ${item.id}`,
-        priceLabel:
-          priceNumber != null ? currencyFormatter.format(priceNumber) : "-",
-        status: resolveStatus(item.status),
-        categoryName: item.category_name || "-",
-        coverUrl: toImageUrl(item.cover_url ?? item.cover ?? null),
-        gallery: item.gallery,
-      };  
-    });
-  }, [products, currencyFormatter]);
+    return rows.map((item) => {
+      const nameText =
+        safeText((item as any).name, currentLocale) ||
+        safeText((item as any).title, currentLocale) ||
+        `${(item as any).slug ?? (item as any).id}`;
 
-  const handleNewProduct = () => router.push("/products/create");
-  const handleEdit = (id: number) => {
-    console.log("Edit product", id);
-    router.push("/products/edit/"+id);
-  };
-  const handleDelete = async (id: number) => {
-    if (!confirm("Yakin ingin menghapus produk ini?")) return;
-  
-    try {
-      await api.delete(`/products/${id}`);
-      // Refresh daftar produk setelah delete
-      setProducts((prev) => prev.filter((p) => p.id !== id));
-      setMeta((prev) => {
-        const nextTotal = Math.max(0, (prev.total ?? 0) - 1);
-        const nextLastPage = Math.max(1, Math.ceil(nextTotal / pageSize));
-        if (page > nextLastPage) {
-          setPage(nextLastPage);
-        }
-        return {
-          ...prev,
-          total: nextTotal,
-          last_page: nextLastPage,
-          current_page: Math.min(prev.current_page, nextLastPage),
-        };
-      });
-    } catch (err: any) {
-      console.error("Gagal menghapus produk:", err);
-      alert(
-        err?.response?.data?.message ||
-          err?.message ||
-          "Gagal menghapus produk. Coba lagi."
+      const categoryText =
+        safeText((item as any).category, currentLocale) || "-";
+      const brandText = safeText((item as any).brand, currentLocale) || "-";
+
+      const rawStatus =
+        (item as any).status ??
+        (item as any).published ??
+        (item as any).is_active;
+
+      const badge = resolveBadgeStatus(rawStatus);
+
+      const coverUrl = toImageUrl(
+        (item as any).cover_url ??
+          (item as any).image_url ??
+          (item as any).thumbnail_url ??
+          (item as any).cover ??
+          null
       );
-    }
-  };
-  const toggleSortDir = () =>
-    setSortDir((prev) => (prev === "asc" ? "desc" : "asc"));
 
-  const resetFilters = () => {
-    setSearchValue("");
-    setCategoryId("all");
-    setSortField("created_at");
-    setSortDir("desc");
-     setStatusFilter("all");
-    setPageSize(DEFAULT_META.per_page);
-    setPage(1);
-  };
+      return {
+        id: (item as any).id,
+        nameText,
+        categoryText,
+        brandText,
+        badge,
+        coverUrl,
+      };
+    });
+  }, [rows]);
 
-  const sortDirIcon = sortDir === "asc" ? "M5 15l7-7 7 7" : "M5 9l7 7 7-7";
+  const pageSizeOptions = useMemo(() => {
+    const base = new Set<number>([12, 24, 48]);
+    base.add(pageSize);
+    return Array.from(base).sort((a, b) => a - b);
+  }, [pageSize]);
+
+  const handleCreate = () => router.push("/products/create");
+  const handleEdit = (id: number | string) =>
+    router.push(`/products/edit/${id}`);
 
   return (
     <div className="min-h-full">
+      {/* Breadcrumb / top bar */}
       <div className="bg-white border-b border-gray-200 px-6 py-4">
         <div className="flex items-center text-sm text-gray-500">
           <span>Products</span>
@@ -422,18 +266,22 @@ export default function ProductsPage() {
         </div>
       </div>
 
+      {/* Title + Add */}
       <div className="bg-white border-b border-gray-200 px-6 py-6">
         <div className="flex items-center justify-between">
           <h1 className="text-2xl font-semibold text-gray-900">Products</h1>
-          <NewNounButton noun="product" onClick={handleNewProduct} />
+          <NewNounButton noun="product" onClick={handleCreate} />
         </div>
       </div>
 
+      {/* Content */}
       <div className="bg-gray-50">
         <div className="px-6 py-6">
           <div className="rounded-xl border border-gray-200 bg-white shadow-sm">
+            {/* Toolbar */}
             <div className="flex flex-wrap items-center justify-end gap-2 border-b border-gray-200 px-4 py-3">
               <div className="flex flex-wrap items-center gap-2">
+                {/* Search */}
                 <div className="relative">
                   <input
                     value={searchValue}
@@ -456,106 +304,45 @@ export default function ProductsPage() {
                     />
                   </svg>
                 </div>
-
-                <select
-                  value={categoryId}
-                  onChange={(event) => setCategoryId(event.target.value)}
-                  className="w-48 rounded-lg border border-gray-300 bg-white py-2 px-3 text-sm text-gray-700 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  aria-label="Filter kategori"
-                >
-                  {categoryOptions.map((option) => (
-                    <option key={option.value} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
-
-  
-
-                <div className="hidden flex items-center gap-1">
-                  <select
-                    value={sortField}
-                    onChange={(event) => setSortField(event.target.value as SortField)}
-                    className="w-44 rounded-lg border border-gray-300 bg-white py-2 px-3 text-sm text-gray-700 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    aria-label="Urutkan berdasarkan"
-                  >
-                    {SORT_OPTIONS.map((option) => (
-                      <option key={option.value} value={option.value}>
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
-                  <button
-                    type="button"
-                    onClick={toggleSortDir}
-                    aria-label={sortDir === "asc" ? "Urutkan menaik" : "Urutkan menurun"}
-                    aria-pressed={sortDir === "desc"}
-                    className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-gray-200 bg-white text-gray-600 shadow-sm hover:bg-gray-50"
-                  >
-                    <svg className="h-4 w-4" viewBox="0 0 24 24" stroke="currentColor" fill="none">
-                      <path d={sortDirIcon} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" />
-                    </svg>
-                  </button>
-                </div>
               </div>
             </div>
 
-            {error ? (
-              <div className="mx-4 mt-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700" role="alert">
-                {error}
+            {/* Error */}
+            {errorMsg ? (
+              <div
+                className="mx-4 mt-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700"
+                role="alert"
+              >
+                {errorMsg}
               </div>
             ) : null}
 
+            {/* Table */}
             <div className="overflow-x-auto">
               <table
                 className="min-w-full divide-y divide-gray-200"
                 aria-label="Daftar produk"
                 aria-busy={loading}
-                aria-describedby="products-table-status"
               >
                 <caption className="sr-only">Daftar produk</caption>
                 <thead className="bg-gray-50">
                   <tr>
-                    <th
-                      scope="col"
-                      className="w-12 px-3 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 sm:px-6"
-                    >
-                      <input type="checkbox" className="rounded border-gray-300" aria-label="Pilih semua produk" />
+                    <th className="w-12 px-3 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 sm:px-6">
+                      #
                     </th>
-                    <th
-                      scope="col"
-                      className="px-3 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 sm:px-6"
-                    >
+                    <th className="px-3 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 sm:px-6">
                       Cover
                     </th>
-                    <th
-                      scope="col"
-                      className="px-3 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 sm:px-6"
-                    >
+                    <th className="px-3 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 sm:px-6">
                       Nama Produk
                     </th>
-                    <th
-                      scope="col"
-                      className="hidden px-3 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 sm:table-cell sm:px-6"
-                    >
+                    <th className="hidden px-3 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 sm:table-cell sm:px-6">
                       Kategori
                     </th>
-                    {/* <th
-                      scope="col"
-                      className="px-3 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 sm:px-6"
-                    >
-                      Stok
-                    </th> */}
-                    <th
-                      scope="col"
-                      className="px-3 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 sm:px-6"
-                    >
+                    <th className="px-3 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 sm:px-6">
                       Status
                     </th>
-                    <th
-                      scope="col"
-                      className="px-3 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 sm:px-6"
-                    >
+                    <th className="px-3 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 sm:px-6">
                       Actions
                     </th>
                   </tr>
@@ -564,89 +351,94 @@ export default function ProductsPage() {
                 <tbody className="bg-white divide-y divide-gray-200">
                   {loading ? (
                     <tr>
-                      <td colSpan={8} className="px-3 py-6 text-center text-sm text-gray-500 sm:px-6">
+                      <td
+                        colSpan={7}
+                        className="px-3 py-6 text-center text-sm text-gray-500 sm:px-6"
+                      >
                         Memuat produk...
                       </td>
                     </tr>
                   ) : displayProducts.length === 0 ? (
                     <tr>
-                      <td colSpan={8} className="px-3 py-6 text-center text-sm text-gray-500 sm:px-6">
+                      <td
+                        colSpan={7}
+                        className="px-3 py-6 text-center text-sm text-gray-500 sm:px-6"
+                      >
                         Tidak ada produk ditemukan
                       </td>
                     </tr>
                   ) : (
-                    displayProducts.map((product) => (
-                      <tr key={product.id} className="hover:bg-gray-50">
-                        <td className="whitespace-nowrap px-3 py-4 sm:px-6">
-                          <input
-                            type="checkbox"
-                            className="rounded border-gray-300"
-                            aria-label={`Pilih produk ${product.name}`}
-                          />
-                        </td>
-                        <td className="px-3 py-4 sm:px-6">
-                          <div className="h-12 w-12 overflow-hidden rounded bg-gray-200">
-                            {product?.gallery?.[0]?.url ? (
+                    displayProducts.map((p, idx) => {
+                      const seq =
+                        ((meta?.current_page ?? 1) - 1) *
+                          (meta?.per_page ?? pageSize) +
+                        (idx + 1);
+
+                      return (
+                        <tr key={p.id} className="hover:bg-gray-50">
+                          <td className="whitespace-nowrap px-3 py-4 text-sm text-gray-600 sm:px-6">
+                            {seq}
+                          </td>
+
+                          <td className="px-3 py-4 sm:px-6">
+                            <div className="h-12 w-12 overflow-hidden rounded bg-gray-200">
                               <img
-                                src={product.gallery[0].url ?? PLACEHOLDER}
-                                alt={`Cover ${product?.name || "Product"}`}
+                                src={p.coverUrl || PLACEHOLDER}
+                                alt={`Cover ${p.nameText || "Product"}`}
                                 className="h-full w-full object-cover"
-                                onError={(event) => {
-                                  event.currentTarget.src = PLACEHOLDER;
+                                onError={(e) => {
+                                  (e.currentTarget as HTMLImageElement).src =
+                                    PLACEHOLDER;
                                 }}
+                                loading="lazy"
+                                decoding="async"
                               />
-                            ) : (
-                              <div className="flex h-full w-full items-center justify-center bg-gray-100">
-                                <svg
-                                  xmlns="http://www.w3.org/2000/svg"
-                                  viewBox="0 0 24 24"
-                                  fill="none"
-                                  stroke="currentColor"
-                                  strokeWidth="1.5"
-                                  className="h-16 w-16 text-gray-400"
-                                >
-                                  <path
-                                    strokeLinecap="round"
-                                    strokeLinejoin="round"
-                                    d="M3 5a2 2 0 012-2h14a2 2 0 012 2v14a2 2 0 01-2 2H5a2 2 0 01-2-2V5zm3 12l3.086-3.086a2 2 0 012.828 0L15 17m-2-7a2 2 0 11-4 0 2 2 0 014 0z"
-                                  />
-                                </svg>
+                            </div>
+                          </td>
+
+                          <td className="px-3 py-4 sm:px-6">
+                            <div className="max-w-xs truncate text-sm font-medium text-gray-900">
+                              {p.nameText}
+                            </div>
+                            <div className="mt-0.5 hidden text-xs text-gray-500 sm:block">
+                              {p.brandText !== "-" ? p.brandText : ""}
+                            </div>
+                          </td>
+
+                          <td className="hidden whitespace-nowrap px-3 py-4 text-sm text-gray-900 sm:table-cell sm:px-6">
+                            {p.categoryText}
+                          </td>
+
+                          <td className="whitespace-nowrap px-3 py-4 sm:px-6">
+                            <StatusBadge status={p.badge} />
+                          </td>
+
+                          <td className="whitespace-nowrap px-3 py-4 sm:px-6">
+                            <td className="whitespace-nowrap px-3 py-4 sm:px-6">
+                              <div className="flex items-center gap-3 sm:gap-4">
+                                <EditButton
+                                  onClick={() => handleEdit(p.id)}
+                                />
+                                <DeleteButton
+                                  onClick={() => handleDelete(p.id)}
+                                />
                               </div>
-                            )}
-                          </div>
-                        </td>
-                        <td className="px-3 py-4 sm:px-6">
-                          <div className="max-w-xs truncate text-sm font-medium text-gray-900">
-                            {product.name}
-                          </div>
-                        </td>
-                        <td className="hidden whitespace-nowrap px-3 py-4 text-sm text-gray-900 sm:table-cell sm:px-6">
-                          {product.categoryName}
-                        </td>
-                        {/* <td className="whitespace-nowrap px-3 py-4 text-sm text-gray-900 sm:px-6">
-                          {product.stockLabel}
-                        </td> */}
-                        <td className="whitespace-nowrap px-3 py-4 sm:px-6">
-                          <StatusBadge status={product.status} />
-                        </td>
-                        <td className="whitespace-nowrap px-3 py-4 sm:px-6">
-                          <div className="flex items-center gap-3 sm:gap-4">
-                            <EditButton onClick={() => handleEdit(product.id)} />
-                            <DeleteButton onClick={() => handleDelete(product.id)} />
-                          </div>
-                        </td>
-                      </tr>
-                    ))
+                            </td>
+                          </td>
+                        </tr>
+                      );
+                    })
                   )}
                 </tbody>
               </table>
             </div>
 
+            {/* Footer pagination */}
             <div className="border-t border-gray-200 px-4 py-3">
               <Pagination
-                totalItems={meta.total}
-                page={page}
-                pageSize={pageSize}
+                totalItems={totalItems}
+                page={meta?.current_page ?? page}
+                pageSize={meta?.per_page ?? pageSize}
                 onPageChange={setPage}
                 onPageSizeChange={setPageSize}
                 pageSizeOptions={pageSizeOptions}

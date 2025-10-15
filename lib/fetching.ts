@@ -1,69 +1,55 @@
-import { getCookie } from './cookies';
+type Query = Record<string, any>;
 
-const baseURL = (process.env.NEXT_PUBLIC_API_URL || '').replace(/\/$/, '');
-
-type Params = Record<string, string | number | boolean | null | undefined> | undefined;
-type Config = { params?: Params; headers?: Record<string, string> };
-
-function withParams(url: string, params?: Params) {
-  if (!params) return url;
-  const u = new URL(url, 'http://dummy');
-  Object.entries(params).forEach(([k, v]) => {
-    if (v !== undefined && v !== null && v !== '') u.searchParams.set(k, String(v));
+const toQS = (q?: Query) => {
+  if (!q) return "";
+  const s = new URLSearchParams();
+  Object.entries(q).forEach(([k, v]) => {
+    if (v === undefined || v === null || v === "") return;
+    s.set(k, String(v));
   });
-  const path = u.pathname + (u.search ? `?${u.searchParams.toString()}` : '');
-  return path;
-}
+  const out = s.toString();
+  return out ? `?${out}` : "";
+};
 
-function getToken() {
-  try {
-    return getCookie('access_token');
-  } catch {
-    return null;
-  }
-}
+// Selalu pukul route internal Next.js
+const base = "/api";
 
-async function request<T>(method: string, path: string, body?: any, config?: Config) {
-  const token = getToken();
-  const isFormData = typeof FormData !== 'undefined' && body instanceof FormData;
-  const headers: Record<string, string> = {
-    Accept: 'application/json',
-    ...(method !== 'GET' && method !== 'DELETE' && !isFormData ? { 'Content-Type': 'application/json' } : {}),
-    ...(config?.headers || {}),
-  };
-  if (token) headers.Authorization = `Bearer ${token}`;
-
-  const url = baseURL + withParams(path, config?.params);
-  const init: RequestInit = {
+async function request<T>(method: string, path: string, init?: RequestInit): Promise<T> {
+  const url = path.startsWith("/api/") ? path : `${base}${path.startsWith("/") ? "" : "/"}${path}`;
+  const res = await fetch(url, {
     method,
-    headers,
-    cache: 'no-store',
-  };
-  if (body !== undefined) {
-    init.body = isFormData ? body : (typeof body === 'string' ? body : JSON.stringify(body));
-  }
+    cache: "no-store",
+    ...init,
+  });
 
-  const res = await fetch(url, init);
-  const status = res.status;
-  let data: any = null;
-  try {
-    data = await res.json();
-  } catch {
-    data = null;
-  }
+  const text = await res.text();
+  let data: any = {};
+  try { data = text ? JSON.parse(text) : {}; } catch { data = {}; }
+
   if (!res.ok) {
-    const err: any = new Error((data && (data.message || data.error)) || `HTTP ${status}`);
-    err.response = { status, data };
-    throw err;
+    const msg = data?.message || `Request failed (${res.status})`;
+    throw Object.assign(new Error(msg), { status: res.status, data });
   }
-  return { data: data as T, status, ok: res.ok };
+  return data as T;
 }
 
-export const api = {
-  get: <T = any>(path: string, config?: Config) => request<T>('GET', path, undefined, config),
-  delete: <T = any>(path: string, config?: Config) => request<T>('DELETE', path, undefined, config),
-  post: <T = any>(path: string, data?: any, config?: Config) => request<T>('POST', path, data, config),
-  patch: <T = any>(path: string, data?: any, config?: Config) => request<T>('PATCH', path, data, config),
+const api = {
+  get: <T = any>(path: string, opts?: { params?: Query; init?: RequestInit }) =>
+    request<T>("GET", `${path}${toQS(opts?.params)}`, opts?.init),
+  post: <T = any>(path: string, body?: any, init?: RequestInit) =>
+    request<T>("POST", path, {
+      ...(init || {}),
+      headers: body instanceof FormData ? init?.headers : { "Content-Type": "application/json", ...(init?.headers || {}) },
+      body: body instanceof FormData ? body : JSON.stringify(body ?? {}),
+    }),
+  patch: <T = any>(path: string, body?: any, init?: RequestInit) =>
+    request<T>("PATCH", path, {
+      ...(init || {}),
+      headers: body instanceof FormData ? init?.headers : { "Content-Type": "application/json", ...(init?.headers || {}) },
+      body: body instanceof FormData ? body : JSON.stringify(body ?? {}),
+    }),
+  delete: <T = any>(path: string, init?: RequestInit) =>
+    request<T>("DELETE", path, init),
 };
 
 export default api;

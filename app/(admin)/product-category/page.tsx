@@ -178,86 +178,6 @@ export default function ProductCategoryPage() {
                   <path strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" d="M21 21l-4.35-4.35M16 10a6 6 0 1 0-12 0a6 6 0 0 0 12 0Z" />
                 </svg>
               </div>
-
-              {/* Bell (badge 0) */}
-              <button className="relative inline-flex items-center justify-center rounded-md border border-gray-200 p-2 text-gray-500 hover:bg-gray-50">
-                <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-                  <path strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" d="M15 17h5l-1.4-1.4A2 2 0 0 1 18 14.2V11a6 6 0 1 0-12 0v3.2c0 .53-.21 1.05-.6 1.44L4 17h5m6 0v1a3 3 0 1 1-6 0v-1h6z"/>
-                </svg>
-                <span className="absolute -right-1 -top-1 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-amber-500 px-1 text-[10px] font-semibold text-white">0</span>
-              </button>
-
-              {/* Filter popover */}
-              <div className="relative">
-                <button
-                  onClick={() => setFilterOpen((v) => !v)}
-                  className="inline-flex items-center justify-center rounded-md border border-gray-200 p-2 text-gray-500 hover:bg-gray-50"
-                  aria-haspopup="true"
-                  aria-expanded={filterOpen}
-                >
-                  <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-                    <path strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" d="M3 5h18M6 12h12M10 19h4" />
-                  </svg>
-                </button>
-                {filterOpen && (
-                  <div
-                    className="absolute right-0 z-10 mt-2 w-64 rounded-lg border border-gray-200 bg-white p-3 text-sm shadow-lg"
-                    onMouseLeave={() => setFilterOpen(false)}
-                  >
-                    <div className="mb-3">
-                      <div className="mb-1 text-xs font-semibold text-gray-500">Parent Category</div>
-                      <div className="grid grid-cols-3 gap-2">
-                        {([
-                          { key: "all", label: "All" },
-                          { key: "has-parent", label: "Has" },
-                          { key: "no-parent", label: "None" },
-                        ] as const).map((opt) => (
-                          <button
-                            key={opt.key}
-                            onClick={() => setParentFilter(opt.key)}
-                            className={[
-                              "rounded-md px-3 py-1.5",
-                              parentFilter === opt.key
-                                ? "bg-blue-50 text-blue-600 ring-1 ring-inset ring-blue-200"
-                                : "bg-white text-gray-700 hover:bg-gray-50",
-                            ].join(" ")}
-                          >
-                            {opt.label}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-
-                    <div>
-                      <div className="mb-1 text-xs font-semibold text-gray-500">Sort by Name</div>
-                      <div className="flex gap-2">
-                        <button
-                          onClick={() => setSortDir("asc")}
-                          className={[
-                            "flex-1 rounded-md px-3 py-1.5",
-                            sortDir === "asc"
-                              ? "bg-blue-50 text-blue-600 ring-1 ring-inset ring-blue-200"
-                              : "bg-white text-gray-700 hover:bg-gray-50",
-                          ].join(" ")}
-                        >
-                          A → Z
-                        </button>
-                        <button
-                          onClick={() => setSortDir("desc")}
-                          className={[
-                            "flex-1 rounded-md px-3 py-1.5",
-                            sortDir === "desc"
-                              ? "bg-blue-50 text-blue-600 ring-1 ring-inset ring-blue-200"
-                              : "bg-white text-gray-700 hover:bg-gray-50",
-                          ].join(" ")}
-                        >
-                          Z → A
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                )}
-              </div>
             </div>
 
             {/* Table */}
@@ -322,7 +242,7 @@ export default function ProductCategoryPage() {
                         <div className="max-w-xs truncate text-sm font-medium text-gray-900">{category.name_text || category.name?.id || category.name?.en || '-'}</div>
                       </td>
                       <td className="hidden whitespace-nowrap px-3 py-4 text-sm text-gray-900 sm:table-cell sm:px-6">
-                        {category.parent_brief?.slug ?? "-"}
+                        {category.parent_brief?.slug || '-' }
                       </td>
                       <td className="whitespace-nowrap px-3 py-4 sm:px-6">
                         <div className="flex items-center gap-3 sm:gap-4">
