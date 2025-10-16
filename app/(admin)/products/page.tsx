@@ -13,17 +13,13 @@ import {
 } from "@/services/products.service";
 import { EditButton } from "@/components/ui/EditIcon";
 import { DeleteButton } from "@/components/ui/DeleteIcon";
+import api from "@/lib/fetching";
 
 /** ======================
  *  Locale (sesuaikan)
  *  ====================== */
 type Locale = "id" | "en";
 const currentLocale: Locale = "id";
-
-/** ======================
- *  Filter & Status
- *  ====================== */
-type StatusFilter = "all" | "active" | "inactive" | "publish" | "draft";
 
 /** badge status union mengikuti komponen StatusBadge */
 type BadgeStatus = "draft" | "active" | "publish" | "non-active";
@@ -32,10 +28,7 @@ type BadgeStatus = "draft" | "active" | "publish" | "non-active";
 function resolveBadgeStatus(input: unknown): BadgeStatus {
   if (input === true || input === 1 || input === "1") return "active";
   if (input === false || input === 0 || input === "0") return "non-active";
-
-  const str = String(input ?? "")
-    .trim()
-    .toLowerCase();
+  const str = String(input ?? "").trim().toLowerCase();
   if (str === "active") return "active";
   if (str === "inactive" || str === "non-active" || str === "non active")
     return "non-active";
@@ -52,13 +45,12 @@ const STORAGE_BASE = (process.env.NEXT_PUBLIC_STORAGE_URL || "").replace(
   ""
 );
 const PLACEHOLDER = "/api/placeholder/50/50";
-
-function toImageUrl(raw?: string | null) {
+const toImageUrl = (raw?: string | null) => {
   if (!raw) return PLACEHOLDER;
   if (/^https?:\/\//i.test(raw)) return raw;
   if (STORAGE_BASE) return `${STORAGE_BASE}/${String(raw).replace(/^\/+/, "")}`;
   return String(raw).startsWith("/") ? raw : `/${raw}`;
-}
+};
 
 function useDebounce<T>(value: T, delay = 400) {
   const [debounced, setDebounced] = useState(value);
@@ -70,14 +62,39 @@ function useDebounce<T>(value: T, delay = 400) {
 }
 
 /** ======================
+ *  Types kategori lokal
+ *  ====================== */
+type LangText = { id?: string; en?: string } | string | null | undefined;
+
+type ApiCategory = {
+  id: number;
+  slug?: string;
+  name?: { id?: string; en?: string } | string | null;
+};
+
+/** Helper nama kategori bilingual-safe */
+function toCategoryText(cat?: ApiCategory | null): string {
+  if (!cat) return "-";
+  const t =
+    safeText((cat as any).name, currentLocale) ||
+    (typeof (cat as any).name === "string" ? (cat as any).name : "") ||
+    cat.slug ||
+    `Category ${cat.id}`;
+  return t || "-";
+}
+
+/** ======================
  *  Komponen Utama
  *  ====================== */
 export default function ProductsPage() {
   const router = useRouter();
 
-  // data
+  // data produk
   const [rows, setRows] = useState<ProductItem[]>([]);
   const [meta, setMeta] = useState<ProductsResponse["meta"] | null>(null);
+
+  // data kategori (map id -> text)
+  const [catMap, setCatMap] = useState<Record<number, string>>({});
 
   // ui
   const [loading, setLoading] = useState<boolean>(false);
@@ -88,91 +105,92 @@ export default function ProductsPage() {
   const [pageSize, setPageSize] = useState<number>(12);
   const [searchValue, setSearchValue] = useState<string>("");
   const debouncedSearch = useDebounce(searchValue, 500);
-  const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
 
-  // Reset ke page 1 jika filter berubah
-  useEffect(() => {
-    setPage(1);
-  }, [debouncedSearch, statusFilter, pageSize]);
-
+  /** ─────────────────────────────────────────────
+   *  1) Load kategori sekali (status=all; per_page besar)
+   *  ───────────────────────────────────────────── */
   useEffect(() => {
     let mounted = true;
+    (async () => {
+      try {
+        // coba ambil semua kategori; backend kamu biasa pakai per_page
+        const res = await api.get<{
+          status?: string;
+          data?: ApiCategory[];
+          meta?: { total?: number };
+        }>("/categories", { params: { status: "all", per_page: 1000 } });
+
+        if (!mounted) return;
+
+        const list = Array.isArray(res?.data) ? res.data : [];
+        const map: Record<number, string> = {};
+        list.forEach((c) => {
+          map[c.id] = toCategoryText(c);
+        });
+        setCatMap(map);
+      } catch {
+        // abaikan error — fallback nanti pakai "-" / slug dari produk
+        setCatMap({});
+      }
+    })();
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  /** ─────────────────────────────────────────────
+   *  2) Ambil produk ACTIVE + INACTIVE → gabung → virtual paginate
+   *  ───────────────────────────────────────────── */
+  useEffect(() => {
+    let mounted = true;
+
     (async () => {
       try {
         setLoading(true);
         setErrorMsg(null);
 
-        // Saat "all", banyak backend hanya support single status.
-        // Strategi: hit 2x (active + inactive) lalu gabung manual, agar UI tetap sama seperti layout referensi.
-        if (statusFilter === "all") {
-          // Ambil cukup banyak item sampai page saat ini (virtually paginate)
-          const take = Math.max(page, 1) * pageSize;
+        const take = Math.max(page, 1) * pageSize;
+        const q = debouncedSearch || undefined;
 
-          const [resActive, resInactive] = await Promise.all([
-            listProducts({
-              page: 1,
-              perPage: take,
-              search: debouncedSearch || undefined,
-              status: "active",
-            }),
-            listProducts({
-              page: 1,
-              perPage: take,
-              search: debouncedSearch || undefined,
-              status: "inactive",
-            }),
-          ]);
+        const [resActive, resInactive] = await Promise.all([
+          listProducts({
+            page: 1,
+            perPage: take,
+            search: q,
+            status: "active" as any,
+          }),
+          listProducts({
+            page: 1,
+            perPage: take,
+            search: q,
+            status: "inactive" as any,
+          }),
+        ]);
 
-          if (!mounted) return;
+        if (!mounted) return;
 
-          const a = Array.isArray(resActive?.data) ? resActive.data : [];
-          const b = Array.isArray(resInactive?.data) ? resInactive.data : [];
-          // Sederhana: gabung (bisa juga disort kalau backend butuh)
-          const combined = [...a, ...b];
+        const a = Array.isArray(resActive?.data) ? resActive.data : [];
+        const b = Array.isArray(resInactive?.data) ? resInactive.data : [];
 
-          const totalActive = resActive?.meta?.total ?? a.length;
-          const totalInactive = resInactive?.meta?.total ?? b.length;
-          const totalItems = totalActive + totalInactive;
+        const combined = [...a, ...b];
+        // optional sort: combined.sort((x: any, y: any) => Number(y.id) - Number(x.id));
 
-          // virtual paging
-          const lastPage = Math.max(1, Math.ceil(totalItems / pageSize));
-          const currentPage = Math.min(Math.max(page, 1), lastPage);
-          const start = (currentPage - 1) * pageSize;
-          const end = start + pageSize;
+        const totalActive = resActive?.meta?.total ?? a.length;
+        const totalInactive = resInactive?.meta?.total ?? b.length;
+        const totalItems = totalActive + totalInactive;
 
-          setRows(combined.slice(start, end));
-          setMeta({
-            current_page: currentPage,
-            per_page: pageSize,
-            total: totalItems,
-            last_page: lastPage,
-          } as any);
-        } else {
-          const res = await listProducts({
-            page,
-            perPage: pageSize,
-            search: debouncedSearch || undefined,
-            status: statusFilter,
-          });
-          if (!mounted) return;
-          setRows(Array.isArray(res.data) ? res.data : []);
-          // Normalisasi meta agar aman
-          setMeta({
-            current_page: res.meta?.current_page ?? page,
-            per_page: res.meta?.per_page ?? pageSize,
-            total:
-              res.meta?.total ??
-              (Array.isArray(res.data) ? res.data.length : 0),
-            last_page:
-              res.meta?.last_page ??
-              Math.max(
-                1,
-                Math.ceil(
-                  (res.meta?.total ?? 0) / (res.meta?.per_page ?? pageSize)
-                )
-              ),
-          } as any);
-        }
+        const lastPage = Math.max(1, Math.ceil(totalItems / pageSize));
+        const currentPage = Math.min(Math.max(page, 1), lastPage);
+        const start = (currentPage - 1) * pageSize;
+        const end = start + pageSize;
+
+        setRows(combined.slice(start, end));
+        setMeta({
+          current_page: currentPage,
+          per_page: pageSize,
+          total: totalItems,
+          last_page: lastPage,
+        } as any);
       } catch (err: any) {
         if (!mounted) return;
         setRows([]);
@@ -183,22 +201,23 @@ export default function ProductsPage() {
           last_page: 1,
         } as any);
         setErrorMsg(
-          err?.response?.data?.message ||
-            err?.message ||
-            "Gagal memuat data produk. Coba lagi."
+          err?.response?.data?.message || err?.message || "Gagal memuat produk."
         );
       } finally {
         if (mounted) setLoading(false);
       }
     })();
+
     return () => {
       mounted = false;
     };
-  }, [page, pageSize, debouncedSearch, statusFilter]);
+  }, [page, pageSize, debouncedSearch]);
 
   const totalItems = meta?.total ?? 0;
 
-  // Map ke bentuk display
+  /** ─────────────────────────────────────────────
+   *  3) Map ke bentuk display (resolve kategori dari produk/Map)
+   *  ───────────────────────────────────────────── */
   type DisplayProduct = {
     id: number | string;
     nameText: string;
@@ -215,15 +234,36 @@ export default function ProductsPage() {
         safeText((item as any).title, currentLocale) ||
         `${(item as any).slug ?? (item as any).id}`;
 
-      const categoryText =
-        safeText((item as any).category, currentLocale) || "-";
+      // ① kalau response produk sudah menyertakan objek category → pakai itu
+      let categoryText =
+        safeText((item as any).category, currentLocale) ||
+        (typeof (item as any).category === "string"
+          ? (item as any).category
+          : "");
+
+      // ② kalau belum ada, cek category_id dan map kategori hasil fetch
+      const cid =
+        (item as any).category_id ??
+        (item as any).categoryId ??
+        (item as any).category_id_id; // jaga-jaga variasi
+      if ((!categoryText || categoryText === "-") && cid && catMap[cid]) {
+        categoryText = catMap[cid];
+      }
+
+      // ③ fallback terakhir: coba "category_brief" / "parent_brief"
+      if (!categoryText || categoryText === "-") {
+        categoryText =
+          safeText((item as any).category_brief?.name, currentLocale) ||
+          (item as any).category_brief?.slug ||
+          "-";
+      }
+
       const brandText = safeText((item as any).brand, currentLocale) || "-";
 
       const rawStatus =
         (item as any).status ??
         (item as any).published ??
         (item as any).is_active;
-
       const badge = resolveBadgeStatus(rawStatus);
 
       const coverUrl = toImageUrl(
@@ -237,13 +277,13 @@ export default function ProductsPage() {
       return {
         id: (item as any).id,
         nameText,
-        categoryText,
+        categoryText: categoryText || "-",
         brandText,
         badge,
         coverUrl,
       };
     });
-  }, [rows]);
+  }, [rows, catMap]);
 
   const pageSizeOptions = useMemo(() => {
     const base = new Set<number>([12, 24, 48]);
@@ -254,6 +294,50 @@ export default function ProductsPage() {
   const handleCreate = () => router.push("/products/create");
   const handleEdit = (id: number | string) =>
     router.push(`/products/edit/${id}`);
+
+  const refetchAfterDelete = async () => {
+    const take = Math.max(page, 1) * pageSize;
+    const q = debouncedSearch || undefined;
+    const [resActive, resInactive] = await Promise.all([
+      listProducts({ page: 1, perPage: take, search: q, status: "active" as any }),
+      listProducts({ page: 1, perPage: take, search: q, status: "inactive" as any }),
+    ]);
+    const a = Array.isArray(resActive?.data) ? resActive.data : [];
+    const b = Array.isArray(resInactive?.data) ? resInactive.data : [];
+    const combined = [...a, ...b];
+
+    const totalActive = resActive?.meta?.total ?? a.length;
+    const totalInactive = resInactive?.meta?.total ?? b.length;
+    const totalItems = totalActive + totalInactive;
+
+    const lastPage = Math.max(1, Math.ceil(totalItems / pageSize));
+    const currentPage = Math.min(Math.max(page, 1), lastPage);
+    const start = (currentPage - 1) * pageSize;
+    const end = start + pageSize;
+
+    setRows(combined.slice(start, end));
+    setMeta({
+      current_page: currentPage,
+      per_page: pageSize,
+      total: totalItems,
+      last_page: lastPage,
+    } as any);
+  };
+
+  const handleDelete = async (id: number | string) => {
+    const ok = window.confirm("Hapus produk ini?");
+    if (!ok) return;
+    try {
+      await api.delete(`/products/${id}`);
+      await refetchAfterDelete();
+    } catch (err: any) {
+      alert(
+        err?.response?.data?.message ||
+          err?.message ||
+          "Gagal menghapus produk."
+      );
+    }
+  };
 
   return (
     <div className="min-h-full">
@@ -414,15 +498,11 @@ export default function ProductsPage() {
                           </td>
 
                           <td className="whitespace-nowrap px-3 py-4 sm:px-6">
-                              <div className="flex items-center gap-3 sm:gap-4">
-                                <EditButton
-                                  onClick={() => handleEdit(p.id)}
-                                />
-                                <DeleteButton
-                                  onClick={() => handleDelete(p.id)}
-                                />
-                              </div>
-                            </td>
+                            <div className="flex items-center gap-3 sm:gap-4">
+                              <EditButton onClick={() => router.push(`/products/edit/${p.id}`)} />
+                              <DeleteButton onClick={() => handleDelete(p.id)} />
+                            </div>
+                          </td>
                         </tr>
                       );
                     })

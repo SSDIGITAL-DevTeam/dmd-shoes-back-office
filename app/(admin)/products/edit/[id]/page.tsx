@@ -1,585 +1,1043 @@
 "use client";
 
-import type { ChangeEvent } from "react";
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { useParams, useRouter } from "next/navigation";
-import AsyncSelect from "react-select/async";
-import { v7 as uuidv7 } from "uuid";
+import React, { useEffect, useMemo, useState, useCallback } from "react";
+import { useRouter, useParams } from "next/navigation";
 import api from "@/lib/fetching";
-import { CreateButton, CancelButton } from "@/components/ui/ActionButton";
+import { CreateButton as UpdateButton, CancelButton } from "@/components/ui/ActionButton";
 import ToggleSwitch from "@/components/ui/ToggleSwitch";
+import { DeleteButton as DeleteIcon } from "@/components/ui/DeleteIcon";
+import AsyncSelect from "react-select/async";
+import ProductGallery from "@/app/(admin)/products/create/_components/ProductGallery"; // lokasi komponen sama dgn create
 
-type Language = "id" | "en";
-
-interface BilingualText { id: string; en: string; }
-
-interface VariantOption {
-  localId: string;
-  backendId?: string | number | null;
-  label: BilingualText;
-}
-interface VariantDefinition {
-  localId: string;
-  backendId?: string | number | null;
-  name: BilingualText;
-  options: VariantOption[];
-}
-interface GalleryItem {
-  localId: string;
-  backendId?: string | number | null;
-  imageUrl: string;
-  file: File | null;
+interface Gallery {
+  id: number;
+  image: string;      // preview url
   fileName: string;
-  title: BilingualText;
-  alt: BilingualText;
-}
-interface CombinationItem { variant: VariantDefinition; option: VariantOption; }
-interface CombinationEntry { key: string; items: CombinationItem[]; }
-
-interface CategoryOption { value: number; label: string; image?: string | null; }
-interface PromotionOption { value: number; label: string; image?: string | null; }
-
-interface ProductFormState {
-  name: BilingualText;
-  slug: string;
-  description: BilingualText;
-  categoryId: number | null;
-  categoryLabel: string;
-  stock: string;
-  heelHeightCm: string;
-  seoTagsInput: string;
-  seoKeyword: BilingualText;
-  seoDescription: BilingualText;
-  featured: boolean;
-  status: boolean;
+  title: string;
+  alt: string;
+  file?: File | null; // file baru untuk upload
+  uploading?: boolean;
 }
 
-const sanitizeText = (v:any)=> (v==null? "": String(v).trim());
-const toBilingual = (v:any):BilingualText=>{
-  if (typeof v==="string"){const t=sanitizeText(v);return {id:t,en:t};}
-  if (v&&typeof v==="object"){
-    const id=sanitizeText(v.id??""); const en=sanitizeText(v.en??"");
-    return {id: id||en, en: en||id};
-  }
-  return {id:"",en:""};
-};
-const coerceBoolean=(v:any)=> typeof v==="boolean"?v: ["1","true","active","publish"].includes(String(v).toLowerCase());
-const getLocalizedText=(t:BilingualText,lang:Language)=> lang==="id"?(sanitizeText(t.id)||sanitizeText(t.en)):(sanitizeText(t.en)||sanitizeText(t.id));
+interface LangText {
+  id: string;
+  en: string;
+}
 
-const normalizeForCompare=(s:string)=> s.replace(/\s+/g," ").trim().toLowerCase();
-const buildOptionCandidates=(variant:VariantDefinition, option:VariantOption)=>{
-  const vId=sanitizeText(variant.name.id); const vEn=sanitizeText(variant.name.en);
-  const oId=sanitizeText(option.label.id); const oEn=sanitizeText(option.label.en);
-  return [oId,oEn,`${vId} ${oId}`,`${vEn} ${oEn}`,`${vId}: ${oId}`,`${vEn}: ${oEn}`,`${vEn} ${oId}`,`${vId} ${oEn}`]
-    .map(x=>x.replace(/\s+/g," ").trim()).filter(Boolean).map(x=>x.toLowerCase());
-};
-const findOptionMatch=(part:string, variant:VariantDefinition)=>{
-  const n=normalizeForCompare(part);
-  const av=variant.options.filter(o=> Boolean(sanitizeText(o.label.id)||sanitizeText(o.label.en)));
-  for (const o of av){ if (buildOptionCandidates(variant,o).includes(n)) return o; }
-  for (const o of av){
-    const id=normalizeForCompare(o.label.id); const en=normalizeForCompare(o.label.en);
-    if (id && n.includes(id)) return o; if (en && n.includes(en)) return o;
-  }
-  return undefined;
-};
-const createEmptyVariantOption = (): VariantOption => ({ localId: uuidv7(), label: { id: "", en: "" } });
+interface Variant {
+  id: number;
+  name: LangText;
+  options: LangText[];
+}
+
+type ProductDetail = any; // sesuaikan kalau kamu punya type detail
 
 export default function EditProductPage() {
-  const storageUrl = process.env.NEXT_PUBLIC_STORAGE_URL || "";
-  const { id } = useParams<{ id: string }>();
   const router = useRouter();
+  const params = useParams<{ id: string }>();
+  const productId = params?.id;
 
-  const [activeLang, setActiveLang] = useState<Language>("en");
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
-  const [notFound, setNotFound] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
-  const [form, setForm] = useState<ProductFormState>({
-    name: { id: "", en: "" },
+  const [language, setLanguage] = useState<"id" | "en">("en");
+
+  // form state — sama seperti create
+  const [formData, setFormData] = useState({
+    name: "",
     slug: "",
-    description: { id: "", en: "" },
-    categoryId: null, categoryLabel: "",
-    stock: "", heelHeightCm: "",
-    seoTagsInput: "",
-    seoKeyword: { id: "", en: "" },
-    seoDescription: { id: "", en: "" },
-    featured: false, status: true,
+    description: "",
+    category: "",
+    category_id: null as number | null,
+    price: "",
+    tags: "",
+    keyword: "",
+    seoDescription: "",
+    featured: false,
+    status: true,
+    heel_height_cm: "",
   });
 
-  const [pricingType, setPricingType] = useState<"single"|"individual">("single");
-  const [singlePrice, setSinglePrice] = useState("");
-  const [groupPrices, setGroupPrices] = useState<Record<string,string>>({});
-  const [individualPrices, setIndividualPrices] = useState<Record<string,string>>({});
-  const [variants, setVariants] = useState<VariantDefinition[]>([]);
-  const [coverFile, setCoverFile] = useState<File | null>(null);
-  const [coverPreview, setCoverPreview] = useState<string>("");
-  const [galleries, setGalleries] = useState<GalleryItem[]>([]);
+  const [galleries, setGalleries] = useState<Gallery[]>([]);
+  const [variants, setVariants] = useState<Variant[]>([]);
+  const [pricingType, setPricingType] = useState<"single" | "individual">("single");
+  const [groupPrices, setGroupPrices] = useState<{ [group: string]: string }>({});
+  const [individualPrices, setIndividualPrices] = useState<{ [key: string]: string }>({});
+  const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({});
+  const [openSubGroups, setOpenSubGroups] = useState<Record<string, Record<string, boolean>>>({});
+  const [promotionProduct, setPromotionProduct] = useState<{ value: number; label: string } | null>(null);
 
-  // 🆕 Promotion Product (optional)
-  const [promotionProduct, setPromotionProduct] = useState<PromotionOption | null>(null);
+  const isGroupOpen = (first: string) => openGroups[first] !== false;
+  const toggleGroup = (first: string) => setOpenGroups((prev) => ({ ...prev, [first]: !isGroupOpen(first) }));
+  const isSubOpen = (first: string, second: string) => openSubGroups[first]?.[second] ?? true;
+  const toggleSub = (first: string, second: string) =>
+    setOpenSubGroups((prev) => ({ ...prev, [first]: { ...(prev[first] || {}), [second]: !isSubOpen(first, second) } }));
 
-  const resolveImageUrl = useCallback((fullUrl?: string|null, path?: string|null)=>{
-    const direct=sanitizeText(fullUrl); if (direct) return direct;
-    const fallback=sanitizeText(path); if (!fallback) return "";
-    if (/^https?:\/\//i.test(fallback)) return fallback;
-    if (!storageUrl) return fallback.replace(/^\//,"");
-    return `${storageUrl.replace(/\/$/,"")}/${fallback.replace(/^\//,"")}`;
-  },[storageUrl]);
+  const handleInputChange = (
+    e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>
+  ) => {
+    const { name, value } = e.target;
+    setFormData((prev) => ({ ...prev, [name]: value }));
+  };
+  const handleToggleFeatured = () => setFormData((p) => ({ ...p, featured: !p.featured }));
+  const handleToggleStatus = () => setFormData((p) => ({ ...p, status: !p.status }));
 
-  useEffect(()=> {
-    const fetchProduct = async () => {
-      setLoading(true); setErrorMessage(null); setNotFound(false);
+  const parseNumber = (v: any) => {
+    if (v === null || v === undefined || v === "") return null;
+    const n = typeof v === "number" ? v : Number(v);
+    return Number.isFinite(n) ? n : null;
+  };
+
+  // ======= LOAD DETAIL =======
+  useEffect(() => {
+    if (!productId) return;
+    let mounted = true;
+    (async () => {
       try {
-        const response = await api.get(`/products/${id}`);
-        const payload = (response as any)?.data?.data ?? (response as any)?.data ?? (response as any);
-        if (!payload){ setErrorMessage("Product data is unavailable."); return; }
+        setLoading(true);
+        setErrorMessage(null);
+        // prefetch csrf supaya PUT aman
+        fetch("/api/sanctum/csrf-cookie", { credentials: "include" }).catch(() => {});
+        const res = await api.get<ProductDetail>(`/products/${productId}`);
+        if (!mounted) return;
 
-        setForm({
-          name: { id: sanitizeText(payload.name?.id ?? payload.name ?? ""), en: sanitizeText(payload.name?.en ?? payload.name ?? "") },
-          slug: sanitizeText(payload.slug),
-          description: { id: sanitizeText(payload.description?.id ?? payload.description ?? ""), en: sanitizeText(payload.description?.en ?? payload.description ?? "") },
-          categoryId: payload.category_id ?? null,
-          categoryLabel: sanitizeText(payload.category_name),
-          stock: payload.stock!=null ? sanitizeText(payload.stock) : "",
-          heelHeightCm: payload.heel_height_cm!=null ? sanitizeText(payload.heel_height_cm) : "",
-          seoTagsInput: Array.isArray(payload.seo_tags) ? payload.seo_tags.filter(Boolean).join(", ") : "",
-          seoKeyword: toBilingual(payload.seo_keyword),
-          seoDescription: toBilingual(payload.seo_description),
-          featured: coerceBoolean(payload.featured),
-          status: coerceBoolean(payload.status),
+        // Map field dari response ke form
+        const d: any = (res as any)?.data || res;
+
+        // bilingual
+        const name_id = d?.name?.id ?? "";
+        const name_en = d?.name?.en ?? d?.title?.en ?? "";
+        const desc_id = d?.description?.id ?? "";
+        const desc_en = d?.description?.en ?? "";
+
+        // status → boolean toggle
+        const statusStr = String(d?.status ?? "").toLowerCase();
+        const isActive = statusStr === "active" || statusStr === "publish" || d?.published === true;
+
+        setFormData({
+          name: "", // tidak dipakai (kita simpan per bahasa)
+          slug: d?.slug ?? "",
+          description: "",
+          category: d?.category?.name?.id || d?.category?.name?.en || d?.category?.slug || "",
+          category_id: d?.category_id ?? d?.category?.id ?? null,
+          price: d?.price != null ? String(d.price) : "",
+          tags: Array.isArray(d?.seo_tags) ? d.seo_tags.join(", ") : "",
+          keyword: "",
+          seoDescription: "",
+          featured: !!d?.featured,
+          status: isActive,
+          heel_height_cm: d?.heel_height_cm != null ? String(d.heel_height_cm) : "",
         });
 
-        const mode = payload.pricing_mode === "individual" ? "individual" : "single";
-        setPricingType(mode);
-        setSinglePrice(payload.price!=null ? sanitizeText(payload.price) : "");
+        // simpan bilingual UI fields (mengikuti layout create)
+        setTimeout(() => {
+          (setFormData as any)((prev: any) => ({
+            ...prev,
+            name_id,
+            name_en,
+            description_id: desc_id,
+            description_en: desc_en,
+            keyword_id: d?.seo_keyword?.id ?? "",
+            keyword_en: d?.seo_keyword?.en ?? "",
+            seoDescription_id: d?.seo_description?.id ?? "",
+            seoDescription_en: d?.seo_description?.en ?? "",
+          }));
+        });
 
-        setCoverPreview(resolveImageUrl(payload.cover_url, payload.cover));
-
-        // Map gallery
-        const mappedGalleries: GalleryItem[] = Array.isArray(payload.gallery)
-          ? payload.gallery.map((item:any)=>({
-              localId: uuidv7(),
-              backendId: item.id ?? null,
-              imageUrl: resolveImageUrl(item.url, item.url ?? item.path),
-              file: null,
-              fileName: sanitizeText(((item.url ?? "").split("/").pop() as string) ?? ""),
-              title: toBilingual(item.title),
-              alt: toBilingual(item.alt),
+        // variants (attributes)
+        const attrs: Variant[] = Array.isArray(d?.attributes)
+          ? d.attributes.map((a: any, idx: number) => ({
+              id: idx + 1,
+              name: { id: a?.name?.id ?? "", en: a?.name?.en ?? "" },
+              options: Array.isArray(a?.options)
+                ? a.options.map((o: any) => ({ id: o?.id ?? "", en: o?.en ?? "" }))
+                : [{ id: "", en: "" }],
             }))
           : [];
-        setGalleries(mappedGalleries);
+        setVariants(attrs);
 
-        // Map attributes/variants
-        const variantDefs: VariantDefinition[] = Array.isArray(payload.attributes_data)
-          ? payload.attributes_data.map((attribute:any)=> {
-              const options: VariantOption[] =
-                Array.isArray(attribute.options) && attribute.options.length>0
-                  ? attribute.options.map((opt:any)=>({ localId: uuidv7(), backendId: opt.id ?? null, label: toBilingual(opt.value) }))
-                  : [createEmptyVariantOption()];
-              return { localId: uuidv7(), backendId: attribute.id ?? null, name: toBilingual(attribute.name), options };
-            })
-          : [];
-        setVariants(variantDefs);
-
-        // Pricing seeds
-        const initialGroup:Record<string,string> = {};
-        const initialIndividual:Record<string,string> = {};
-        if (Array.isArray(payload.variants_data) && payload.variants_data.length>0 && variantDefs.length>0) {
-          payload.variants_data.forEach((vp:any)=>{
-            const label=sanitizeText(vp.label);
-            const price= vp.price!=null ? sanitizeText(vp.price) : "";
-            if (!label || !price) return;
-            const segments = label.split("|").map((s:string)=>s.trim()).filter(Boolean);
-            if (segments.length===0) return;
-            const matched:VariantOption[]=[];
-            segments.forEach((seg:string, idx:number)=>{
-              const v=variantDefs[idx]; if (!v) return;
-              const m=findOptionMatch(seg, v); if (m) matched.push(m);
+        // pricing
+        if (Array.isArray(d?.variant_prices) && d.variant_prices.length > 0) {
+          setPricingType("individual");
+          const valid = attrs.filter((v) => v.options.some((o) => (o.id || o.en).trim() !== ""));
+          if (valid.length === 1) {
+            const gp: Record<string, string> = {};
+            d.variant_prices.forEach((vp: any) => {
+              const label = vp?.labels?.[0];
+              const optText = (label?.en || label?.id || "").split(": ").pop() || "";
+              if (optText) gp[optText] = String(vp?.price ?? "");
             });
-            if (matched.length===1 && variantDefs.length===1){
-              initialGroup[matched[0].localId]=price;
-            } else if (matched.length===segments.length && matched.length>0){
-              initialIndividual[matched.map(o=>o.localId).join("|")] = price;
+            setGroupPrices(gp);
+          } else {
+            const ip: Record<string, string> = {};
+            d.variant_prices.forEach((vp: any) => {
+              // key gabungan pakai en order
+              const key = (vp?.labels || [])
+                .map((lb: any) => (lb?.en || lb?.id || "").split(": ").pop() || "")
+                .join("-");
+              if (key) ip[key] = String(vp?.price ?? "");
+            });
+            setIndividualPrices(ip);
+          }
+        } else {
+          setPricingType("single");
+        }
+
+        // galleries
+        const gal: Gallery[] = Array.isArray(d?.gallery)
+          ? d.gallery.map((g: any, idx: number) => ({
+              id: idx + 1,
+              image: g?.image_url || g?.url || g?.image || "",
+              title: g?.title || "",
+              alt: g?.alt || "",
+              fileName: g?.file_name || `image-${idx + 1}.jpg`,
+            }))
+          : [];
+        setGalleries(gal);
+      } catch (err: any) {
+        setErrorMessage(err?.response?.data?.message || err?.message || "Gagal memuat detail produk.");
+      } finally {
+        setLoading(false);
+      }
+    })();
+    return () => {
+      mounted = false;
+    };
+  }, [productId]);
+
+  // ======= LOADERS (kategori & promo) — sama dgn create =======
+  const loadCategoryOptions = useCallback(async (inputValue: string) => {
+    try {
+      const res = await api.get<{ status: string; data: any[] }>(`/category`, {
+        params: { status: "active", perPage: 100, search: inputValue },
+      } as any);
+      const list = (res as any)?.data?.data || (res as any)?.data || [];
+      return list.map((cat: any) => ({
+        value: cat.id,
+        label: (cat.name && (cat.name.id || cat.name.en)) || cat.slug || `Category ${cat.id}`,
+        image: cat.cover_url || cat.cover || null,
+      }));
+    } catch {
+      return [];
+    }
+  }, []);
+
+  const loadPromotionOptions = useCallback(async (inputValue: string) => {
+    try {
+      const res = await api.get<{ status: string; data: any[] }>(`/products`, {
+        params: { status: "publish", perPage: 100, search: inputValue },
+      } as any);
+      const list = (res as any)?.data?.data || (res as any)?.data || [];
+      return list.map((p: any) => ({
+        value: p.id,
+        label: (p.name && (p.name.id || p.name.en)) || p.slug || `Product ${p.id}`,
+        image: p.cover_url || p.cover || null,
+      }));
+    } catch {
+      return [];
+    }
+  }, []);
+
+  // ======= VARIANT HELPERS — sama dgn create =======
+  const handleAddVariant = () => {
+    if (variants.length >= 3) return;
+    const v: Variant = { id: variants.length + 1, name: { id: "", en: "" }, options: [{ id: "", en: "" }] };
+    setVariants((prev) => [...prev, v]);
+  };
+  const handleVariantNameChange = (id: number, value: string, lang: "id" | "en") => {
+    setVariants((prev) => prev.map((v) => (v.id === id ? { ...v, name: { ...v.name, [lang]: value } } : v)));
+  };
+  const handleOptionChange = (variantId: number, optionIndex: number, value: string, lang: "id" | "en") => {
+    setVariants((prev) =>
+      prev.map((variant) => {
+        if (variant.id !== variantId) return variant;
+        const newOptions = variant.options.map((o, i) => (i === optionIndex ? { ...o, [lang]: value } : o));
+        const hasEmpty = newOptions.some((opt) => (opt.id || opt.en).trim() === "");
+        const finalOptions = hasEmpty ? newOptions : [...newOptions, { id: "", en: "" }];
+        return { ...variant, options: finalOptions };
+      })
+    );
+  };
+  const handleRemoveOption = (variantId: number, optionIndex: number) => {
+    setVariants((prev) =>
+      prev.map((variant) => {
+        if (variant.id !== variantId) return variant;
+        const newOptions = variant.options.filter((_, i) => i !== optionIndex);
+        if (!newOptions.some((opt) => (opt.id || opt.en).trim() === "")) newOptions.push({ id: "", en: "" });
+        return { ...variant, options: newOptions };
+      })
+    );
+  };
+  const handleRemoveVariant = (id: number) => setVariants((prev) => prev.filter((v) => v.id !== id));
+
+  const getValidVariants = useMemo(
+    () => () => variants.filter((v) => v.options.some((o) => (o.id || o.en).trim() !== "")),
+    [variants]
+  );
+  const validVariantCount = getValidVariants().length;
+
+  useEffect(() => {
+    if (validVariantCount !== 1 && Object.keys(groupPrices).length > 0) {
+      setGroupPrices({});
+    }
+  }, [validVariantCount]); // eslint-disable-line
+
+  const generateVariantCombinations = () => {
+    const valid = getValidVariants();
+    if (valid.length === 0) return [];
+    const combinations: string[][] = [[]];
+    valid.forEach((variant) => {
+      const opts = variant.options
+        .filter((o) => (o.id || o.en).trim() !== "")
+        .map((o) => (language === "id" ? o.id || o.en : o.en || o.id));
+      const next: string[][] = [];
+      combinations.forEach((c) => opts.forEach((o) => next.push([...c, o])));
+      combinations.length = 0;
+      combinations.push(...next);
+    });
+    return combinations;
+  };
+
+  const groupedCombinations = () => {
+    const grouped: { [key: string]: string[][] } = {};
+    generateVariantCombinations().forEach((comb) => {
+      const first = comb[0] || "Default";
+      if (!grouped[first]) grouped[first] = [];
+      grouped[first].push(comb);
+    });
+    return grouped;
+  };
+
+  const handleGalleryChange = (id: number, field: string, value: string) => {
+    setGalleries((prev) => prev.map((g) => (g.id === id ? { ...g, [field]: value } : g)));
+  };
+  const handleRemoveGallery = (id: number) => setGalleries((prev) => prev.filter((g) => g.id !== id));
+  const handleAddGallery = () => {
+    const newGallery: Gallery = { id: galleries.length + 1, image: "", title: "", alt: "", fileName: "file_name.jpg" };
+    setGalleries((prev) => [...prev, newGallery]);
+  };
+
+  // ======= SUBMIT (PUT /products/:id) — sama builder dgn create =======
+  const handleUpdate = async () => {
+    setErrorMessage(null);
+    setSuccessMessage(null);
+
+    const slug = formData.slug.trim();
+    const categoryId = formData.category_id;
+    const name_id = (formData as any).name_id?.trim() || "";
+    const name_en = (formData as any).name_en?.trim() || "";
+    const description_id = (formData as any).description_id?.trim() || "";
+    const description_en = (formData as any).description_en?.trim() || "";
+    const pricingMode = pricingType === "single" ? "single" : "per_variant";
+    const rootPriceValue = parseNumber(formData.price);
+
+    const errors: string[] = [];
+    if (!name_en) errors.push("Nama produk (EN) wajib diisi.");
+    if (!slug) errors.push("Slug wajib diisi.");
+    if (!description_en) errors.push("Deskripsi (EN) wajib diisi.");
+    if (!categoryId) errors.push("Kategori wajib dipilih.");
+    if (pricingMode === "single" && rootPriceValue == null) errors.push("Harga produk wajib diisi.");
+    const validVariants = getValidVariants();
+    const variantCombinations = generateVariantCombinations();
+    if (pricingMode === "per_variant" && validVariants.length > 0 && variantCombinations.length === 0) {
+      errors.push("Lengkapi opsi varian sebelum menyimpan.");
+    }
+    if (errors.length > 0) { setErrorMessage(errors[0]); return; }
+
+    setSubmitting(true);
+    try {
+      const fd = new FormData();
+      fd.append("status", formData.status ? "publish" : "draft");
+      fd.append("featured", formData.featured ? "1" : "0");
+      fd.append("category_id", String(categoryId));
+      fd.append("pricing_mode", pricingMode);
+      fd.append("name[id]", name_id);
+      fd.append("name[en]", name_en);
+      fd.append("description[id]", description_id);
+      fd.append("description[en]", description_en);
+      fd.append("slug", slug);
+      fd.append("heel_height_cm", formData.heel_height_cm || "0");
+
+      // SEO
+      const seoTags = formData.tags.split(/[,\n]/).map((t) => t.trim()).filter(Boolean);
+      seoTags.forEach((tag, i) => fd.append(`seo_tags[${i}]`, tag));
+      const keyword_id = (formData as any).keyword_id?.trim() || "";
+      const keyword_en = (formData as any).keyword_en?.trim() || "";
+      const seoDesc_id = (formData as any).seoDescription_id?.trim() || "";
+      const seoDesc_en = (formData as any).seoDescription_en?.trim() || "";
+      if (keyword_id) fd.append("seo_keyword[id]", keyword_id);
+      if (keyword_en) fd.append("seo_keyword[en]", keyword_en);
+      if (seoDesc_id) fd.append("seo_description[id]", seoDesc_id);
+      if (seoDesc_en) fd.append("seo_description[en]", seoDesc_en);
+
+      // Attributes
+      const attributes = getValidVariants().map((variant, index) => ({
+        name: {
+          id: variant.name.id || variant.name.en || `Variant ${index + 1}`,
+          en: variant.name.en || variant.name.id || `Variant ${index + 1}`,
+        },
+        options: variant.options
+          .filter((o) => (o.id || o.en).trim() !== "")
+          .map((o) => ({ id: o.id || o.en, en: o.en || o.id })),
+      }));
+      attributes.forEach((attr, i) => {
+        fd.append(`attributes[${i}][name][id]`, attr.name.id);
+        fd.append(`attributes[${i}][name][en]`, attr.name.en);
+        attr.options.forEach((opt, j) => {
+          fd.append(`attributes[${i}][options][${j}][id]`, opt.id);
+          fd.append(`attributes[${i}][options][${j}][en]`, opt.en);
+        });
+      });
+
+      // Variant prices
+      if (pricingMode === "per_variant" && variantCombinations.length > 0) {
+        type VPrice = {
+          labels: { id: string; en: string }[];
+          price: number;
+          stock: number;
+          active: boolean;
+          size_eu?: number;
+        };
+        const valid = getValidVariants();
+        const optionCombos: LangText[][] = (() => {
+          if (valid.length === 0) return [];
+          let combos: LangText[][] = [[]];
+          valid.forEach((v) => {
+            const opts = v.options.filter((o) => (o.id || o.en).trim() !== "");
+            const next: LangText[][] = [];
+            combos.forEach((c) => opts.forEach((o) => next.push([...c, o])));
+            combos = next;
+          });
+          return combos;
+        })();
+
+        const variantPricesPayload: VPrice[] = [];
+        if (valid.length === 1) {
+          optionCombos.forEach((combination) => {
+            const opt = combination[0];
+            const displayFirst = opt.en || opt.id;
+            const priceValue = parseNumber(groupPrices[displayFirst]);
+            if (priceValue != null) {
+              const v0 = valid[0];
+              const label = {
+                id: `${v0.name.id || v0.name.en}: ${opt.id || opt.en}`,
+                en: `${v0.name.en || v0.name.id}: ${opt.en || opt.id}`,
+              };
+              const payload: VPrice = { labels: [label], price: priceValue, stock: 0, active: true };
+              const numericSize = Number(opt.en || opt.id);
+              if (!Number.isNaN(numericSize)) payload.size_eu = numericSize;
+              variantPricesPayload.push(payload);
+            }
+          });
+        } else {
+          optionCombos.forEach((combination) => {
+            const enKey = combination.map((o) => o.en || o.id).join("-");
+            const priceValue = parseNumber(individualPrices[enKey]);
+            if (priceValue != null) {
+              const labels = combination.map((opt, idx) => {
+                const v = valid[idx];
+                return {
+                  id: `${v.name.id || v.name.en}: ${opt.id || opt.en}`,
+                  en: `${v.name.en || v.name.id}: ${opt.en || opt.id}`,
+                };
+              });
+              variantPricesPayload.push({ labels, price: priceValue, stock: 0, active: true });
             }
           });
         }
-        setGroupPrices(initialGroup);
-        setIndividualPrices(initialIndividual);
-
-        // 🆕 Prefill Promotion Product if API provides it
-        // Try a few common shapes safely:
-        const promoObj = payload.promotion_product || payload.promoted_product || null;
-        const promoId = payload.promotion_product_id ?? promoObj?.id ?? null;
-        const promoLabel =
-          sanitizeText(promoObj?.name?.id ?? promoObj?.name?.en ?? promoObj?.name ?? payload.promotion_product_name) || "";
-        const promoImage = sanitizeText(promoObj?.cover_url);
-        if (promoId && promoLabel){
-          setPromotionProduct({ value: Number(promoId), label: promoLabel, image: promoImage || null });
-        }
-      } catch (e:any){
-        if (e?.response?.status===404) setNotFound(true);
-        else setErrorMessage("Failed to load product.");
-      } finally { setLoading(false); }
-    };
-    fetchProduct();
-  }, [id, resolveImageUrl]);
-
-  useEffect(()=>()=>{ if (coverPreview?.startsWith("blob:")) URL.revokeObjectURL(coverPreview);
-    galleries.forEach(g=>{ if (g.imageUrl.startsWith("blob:")) URL.revokeObjectURL(g.imageUrl); });
-  },[coverPreview,galleries]);
-
-  const combinationEntries = useMemo<CombinationEntry[]>(()=> {
-    const prepared = variants
-      .map(variant=>({ variant, options: variant.options.filter(o=> Boolean(sanitizeText(o.label.id)||sanitizeText(o.label.en))) }))
-      .filter(e=>e.options.length>0);
-    if (!prepared.length) return [];
-    let combos:CombinationEntry[]=[{key:"",items:[]}];
-    prepared.forEach(({variant,options})=>{
-      const next:CombinationEntry[]=[];
-      options.forEach(option=>{
-        combos.forEach(c=>{
-          const key = c.items.length ? `${c.key}|${option.localId}` : option.localId;
-          next.push({ key, items:[...c.items,{variant,option}] });
+        variantPricesPayload.forEach((vp, i) => {
+          vp.labels.forEach((label, j) => {
+            fd.append(`variant_prices[${i}][labels][${j}][id]`, label.id);
+            fd.append(`variant_prices[${i}][labels][${j}][en]`, label.en);
+          });
+          fd.append(`variant_prices[${i}][price]`, String(vp.price));
+          fd.append(`variant_prices[${i}][stock]`, String(vp.stock));
+          fd.append(`variant_prices[${i}][active]`, vp.active ? "1" : "0");
+          if (vp.size_eu != null) fd.append(`variant_prices[${i}][size_eu]`, String(vp.size_eu));
         });
-      });
-      combos = next;
-    });
-    return combos;
-  },[variants]);
-
-  const singleVariantCombos = useMemo(()=> combinationEntries.filter(c=>c.items.length===1),[combinationEntries]);
-  const multiVariantCombos  = useMemo(()=> combinationEntries.filter(c=>c.items.length>1),[combinationEntries]);
-
-  useEffect(()=> {
-    if (pricingType!=="individual") return;
-    setGroupPrices(prev=>{
-      const keys=singleVariantCombos.map(c=>c.key);
-      let changed=Object.keys(prev).length!==keys.length;
-      const next:Record<string,string>={};
-      keys.forEach(k=>{ if(!(k in prev)) changed=true; next[k]=prev[k]??""; });
-      if (!changed){
-        const a=Object.keys(prev).sort(); const b=[...keys].sort();
-        for (let i=0;i<b.length;i++){ if (a[i]!==b[i]){changed=true;break;} }
+      } else if (pricingMode === "single" && rootPriceValue != null) {
+        fd.append("price", String(rootPriceValue));
       }
-      return changed? next: prev;
-    });
-    setIndividualPrices(prev=>{
-      const keys=multiVariantCombos.map(c=>c.key);
-      let changed=Object.keys(prev).length!==keys.length;
-      const next:Record<string,string>={};
-      keys.forEach(k=>{ if(!(k in prev)) changed=true; next[k]=prev[k]??""; });
-      if (!changed){
-        const a=Object.keys(prev).sort(); const b=[...keys].sort();
-        for (let i=0;i<b.length;i++){ if (a[i]!==b[i]){changed=true;break;} }
-      }
-      return changed? next: prev;
-    });
-  },[pricingType,singleVariantCombos,multiVariantCombos]);
 
-  const handleTextInputChange = (e:ChangeEvent<HTMLInputElement|HTMLTextAreaElement>)=>{
-    const {name,value}=e.target;
-    setForm(prev=>({...prev,[name]:value} as ProductFormState));
-  };
-  const updateMultilingualField = (field:"name"|"description"|"seoKeyword"|"seoDescription", lang:Language, value:string)=>{
-    setForm(prev=>({...prev,[field]:{...prev[field], [lang]: value}}));
-  };
-  const handleCategoryChange = (option: CategoryOption|null)=>{
-    setForm(prev=>({...prev, categoryId: option?.value ?? null, categoryLabel: option?.label ?? ""}));
-  };
-
-  const handleAddVariant=()=> setVariants(prev=> prev.length>=3? prev : [...prev,{localId:uuidv7(), name:{id:"",en:""}, options:[createEmptyVariantOption()]}]);
-  const handleRemoveVariant=(variantId:string)=> setVariants(prev=> prev.filter(v=>v.localId!==variantId));
-  const handleVariantNameChange=(variantId:string, lang:Language, value:string)=> setVariants(prev=> prev.map(v=> v.localId===variantId? {...v, name:{...v.name,[lang]:value}}:v));
-  const handleOptionLabelChange=(variantId:string, optionId:string, lang:Language, value:string)=> setVariants(prev=> prev.map(v=> v.localId===variantId? {...v, options: v.options.map(o=> o.localId===optionId? {...o, label:{...o.label,[lang]:value}}:o)}:v));
-  const handleAddOption=(variantId:string)=> setVariants(prev=> prev.map(v=> v.localId===variantId? {...v, options:[...v.options, createEmptyVariantOption()]}:v));
-  const handleRemoveOption=(variantId:string, optionId:string)=> setVariants(prev=> prev.map(v=> v.localId!==variantId? v : {...v, options: (v.options.filter(o=>o.localId!==optionId).length? v.options.filter(o=>o.localId!==optionId):[createEmptyVariantOption()])}));
-
-  const handleAddGallery=()=> setGalleries(prev=>[...prev,{localId:uuidv7(), imageUrl:"", file:null, fileName:"", title:{id:"",en:""}, alt:{id:"",en:""}}]);
-  const handleRemoveGallery=(galleryId:string)=> setGalleries(prev=> prev.filter(g=>g.localId!==galleryId));
-  const handleGalleryTextChange=(galleryId:string, field:"title"|"alt", lang:Language, value:string)=> setGalleries(prev=> prev.map(g=> g.localId===galleryId? {...g,[field]:{...g[field],[lang]:value}}:g));
-  const handleGalleryFileChange=(galleryId:string, e:ChangeEvent<HTMLInputElement>)=>{
-    const file=e.target.files?.[0]; if(!file) return;
-    setGalleries(prev=> prev.map(g=>{
-      if (g.localId!==galleryId) return g;
-      if (g.imageUrl.startsWith("blob:")) URL.revokeObjectURL(g.imageUrl);
-      return {...g, file, imageUrl: URL.createObjectURL(file), fileName: file.name};
-    }));
-  };
-  const handleCoverFileChange=(e:ChangeEvent<HTMLInputElement>)=>{
-    const file=e.target.files?.[0]; if(!file) return;
-    if (coverPreview && coverPreview.startsWith("blob:")) URL.revokeObjectURL(coverPreview);
-    setCoverFile(file); setCoverPreview(URL.createObjectURL(file));
-  };
-
-  const loadCategoryOptions = useCallback(async (inputValue:string)=>{
-    try{
-      const res = await api.get("/categories",{ params:{ status:"active", per_page:100, search: inputValue }});
-      const list = (res as any)?.data?.data ?? (res as any)?.data ?? (res as any);
-      if (!Array.isArray(list)) return [];
-      return list.map((item:any)=> {
-        const name=toBilingual(item.name);
-        const label = sanitizeText(name.id) || sanitizeText(name.en) || sanitizeText(item.slug) || `Category ${item.id}`;
-        return { value:item.id, label, image:sanitizeText(item.cover_url) } as CategoryOption;
+      // Gallery (tambahkan file baru saja; gambar lama dibiarkan)
+      galleries.forEach((g, i) => {
+        if (g.file) {
+          fd.append(`gallery[${i}][image]`, g.file);
+          if (g.title) fd.append(`gallery[${i}][title]`, g.title);
+          if (g.alt) fd.append(`gallery[${i}][alt]`, g.alt);
+          fd.append(`gallery[${i}][sort]`, String(i));
+        }
       });
-    }catch{ return []; }
-  },[]);
 
-  // 🆕 Loader untuk Promotion Product
-  const loadPromotionOptions = useCallback(async (inputValue:string)=>{
-    try{
-      // sesuaikan params/filter sesuai backend-mu
-      const res = await api.get("/products",{ params:{ status:"publish", per_page:100, search: inputValue }});
-      const list = (res as any)?.data?.data ?? (res as any)?.data ?? [];
-      if (!Array.isArray(list)) return [];
-      return list.map((p:any)=> {
-        const nm = toBilingual(p.name);
-        const label = sanitizeText(nm.id) || sanitizeText(nm.en) || sanitizeText(p.slug) || `Product ${p.id}`;
-        return { value:Number(p.id), label, image:sanitizeText(p.cover_url) } as PromotionOption;
-      });
-    }catch{ return []; }
-  },[]);
-
-  const validateBeforeSubmit=()=>{
-    const missing:string[]=[];
-    if (!sanitizeText(form.name.id)) missing.push("Name (ID)");
-    if (!sanitizeText(form.name.en)) missing.push("Name (EN)");
-    if (!sanitizeText(form.description.id)) missing.push("Description (ID)");
-    if (!sanitizeText(form.description.en)) missing.push("Description (EN)");
-    if (!sanitizeText(form.slug)) missing.push("Slug");
-    if (!form.categoryId) missing.push("Category");
-    if (pricingType==="single" && !sanitizeText(singlePrice)) missing.push("Price");
-    if (missing.length){ setErrorMessage(`Please complete: ${missing.join(", ")}`); return false; }
-    return true;
-  };
-
-  const handleSubmit = async ()=>{
-    if (submitting) return;
-    setErrorMessage(null); setSuccessMessage(null);
-    if (!validateBeforeSubmit()) return;
-
-    setSubmitting(true);
-    try{
-      const fd = new FormData();
-      fd.append("pricing_mode", pricingType);
-      fd.append("name[id]", sanitizeText(form.name.id));
-      fd.append("name[en]", sanitizeText(form.name.en));
-      fd.append("description[id]", sanitizeText(form.description.id));
-      fd.append("description[en]", sanitizeText(form.description.en));
-      fd.append("slug", sanitizeText(form.slug));
-      if (form.categoryId) fd.append("category_id", String(form.categoryId));
-      if (sanitizeText(form.stock)) fd.append("stock", sanitizeText(form.stock));
-      if (sanitizeText(form.heelHeightCm)) fd.append("heel_height_cm", sanitizeText(form.heelHeightCm));
-      if (pricingType==="single") fd.append("price", sanitizeText(singlePrice));
-
-      // SEO
-      const tags = form.seoTagsInput.split(/[,\n]/).map(t=>sanitizeText(t)).filter(Boolean);
-      tags.forEach((t,i)=> fd.append(`seo_tags[${i}]`, t));
-      if (sanitizeText(form.seoKeyword.id)) fd.append("seo_keyword[id]", sanitizeText(form.seoKeyword.id));
-      if (sanitizeText(form.seoKeyword.en)) fd.append("seo_keyword[en]", sanitizeText(form.seoKeyword.en));
-      if (sanitizeText(form.seoDescription.id)) fd.append("seo_description[id]", sanitizeText(form.seoDescription.id));
-      if (sanitizeText(form.seoDescription.en)) fd.append("seo_description[en]", sanitizeText(form.seoDescription.en));
-
-      // 🆕 Promotion product (optional)
+      // (opsional) promotion_product_id bila diperlukan
       if (promotionProduct?.value) {
         fd.append("promotion_product_id", String(promotionProduct.value));
       }
 
-      fd.append("featured", form.featured ? "1":"0");
-      fd.append("status",   form.status ? "1":"0");
-
-      if (coverFile) fd.append("cover", coverFile);
-
-      // Attributes
-      const prepared = variants.map(v=>{
-        const options=v.options.filter(o=> Boolean(sanitizeText(o.label.id)||sanitizeText(o.label.en)));
-        return {v, options};
-      }).filter(x=>x.options.length>0);
-
-      prepared.forEach(({v,options}, i)=>{
-        const nameId = sanitizeText(v.name.id) || sanitizeText(v.name.en) || `Variant ${i+1}`;
-        const nameEn = sanitizeText(v.name.en) || sanitizeText(v.name.id) || `Variant ${i+1}`;
-        fd.append(`attributes[${i}][name][id]`, nameId);
-        fd.append(`attributes[${i}][name][en]`, nameEn);
-        options.forEach((o,j)=>{
-          const idVal = sanitizeText(o.label.id) || sanitizeText(o.label.en);
-          const enVal = sanitizeText(o.label.en) || sanitizeText(o.label.id);
-          fd.append(`attributes[${i}][options][${j}][id]`, idVal || enVal);
-          fd.append(`attributes[${i}][options][${j}][en]`, enVal || idVal);
-        });
-      });
-
-      // Gallery
-      galleries.forEach((g,i)=>{
-        if (g.file) fd.append(`gallery[${i}][image]`, g.file);
-        fd.append(`gallery[${i}][sort]`, String(i));
-        const tId=sanitizeText(g.title.id), tEn=sanitizeText(g.title.en);
-        const aId=sanitizeText(g.alt.id),   aEn=sanitizeText(g.alt.en);
-        if (tId) fd.append(`gallery[${i}][title][id]`, tId);
-        if (tEn) fd.append(`gallery[${i}][title][en]`, tEn);
-        if (aId) fd.append(`gallery[${i}][alt][id]`, aId);
-        if (aEn) fd.append(`gallery[${i}][alt][en]`, aEn);
-      });
-
-      // Variant prices
-      if (pricingType==="individual"){
-        const singles = combinationEntries.filter(c=>c.items.length===1);
-        const multis  = combinationEntries.filter(c=>c.items.length>1);
-        const vp: {labels:BilingualText[]; price:string; sizeEU?:string;}[] = [];
-        if (singles.length>0 && multis.length===0){
-          singles.forEach(combo=>{
-            const price = sanitizeText(groupPrices[combo.key]); if (!price) return;
-            const {variant, option} = combo.items[0];
-            const vId = sanitizeText(variant.name.id) || sanitizeText(variant.name.en) || "Variant";
-            const vEn = sanitizeText(variant.name.en) || sanitizeText(variant.name.id) || "Variant";
-            const oId = sanitizeText(option.label.id) || sanitizeText(option.label.en);
-            const oEn = sanitizeText(option.label.en) || sanitizeText(option.label.id);
-            const e = { labels:[{id:`${vId}: ${oId}`, en:`${vEn}: ${oEn}`}], price };
-            const num = oEn || oId; if (num && /^\d+(\.\d+)?$/.test(num)) (e as any).sizeEU = num;
-            vp.push(e as any);
-          });
-        } else if (multis.length>0){
-          multis.forEach(combo=>{
-            const price = sanitizeText(individualPrices[combo.key]); if (!price) return;
-            const labels = combo.items.map(({variant,option})=>{
-              const vId = sanitizeText(variant.name.id) || sanitizeText(variant.name.en) || "Variant";
-              const vEn = sanitizeText(variant.name.en) || sanitizeText(variant.name.id) || "Variant";
-              const oId = sanitizeText(option.label.id) || sanitizeText(option.label.en);
-              const oEn = sanitizeText(option.label.en) || sanitizeText(option.label.id);
-              return { id:`${vId}: ${oId}`, en:`${vEn}: ${oEn}` };
-            });
-            vp.push({ labels, price });
-          });
-        }
-        vp.forEach((entry,i)=>{
-          entry.labels.forEach((l,j)=>{
-            fd.append(`variant_prices[${i}][labels][${j}][id]`, l.id);
-            fd.append(`variant_prices[${i}][labels][${j}][en]`, l.en);
-          });
-          fd.append(`variant_prices[${i}][price]`, entry.price);
-          fd.append(`variant_prices[${i}][stock]`, "0");
-          fd.append(`variant_prices[${i}][active]`, "1");
-          if (entry.sizeEU) fd.append(`variant_prices[${i}][size_eu]`, entry.sizeEU);
-        });
+      await api.patch(`/products/${productId}`, fd as any);
+      setSuccessMessage("Produk berhasil diperbarui.");
+      setTimeout(() => router.push("/products"), 800);
+    } catch (err: any) {
+      const response = err?.data || err?.response?.data;
+      if (response?.errors) {
+        const messages = Object.values(response.errors).flat().map((m: any) => String(m));
+        setErrorMessage(messages[0] || response.message || "Gagal memperbarui produk.");
+      } else {
+        setErrorMessage(response?.message || err?.message || "Gagal memperbarui produk.");
       }
-
-      await api.patch(`/products/${id}`, fd);
-      setSuccessMessage("Product updated successfully.");
-      setTimeout(()=> router.push("/products"), 800);
-    } catch {
-      setErrorMessage("Failed to update product.");
-    } finally { setSubmitting(false); }
+    } finally {
+      setSubmitting(false);
+    }
   };
 
-  const categoryValue = form.categoryId ? ({ value: form.categoryId, label: form.categoryLabel } as CategoryOption) : null;
-
-  if (loading){
-    return (
-      <div className="p-6">
-        <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">Loading...</div>
-      </div>
-    );
-  }
-  if (notFound){
-    return (
-      <div className="p-6 space-y-4">
-        <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-          <h1 className="text-lg font-semibold text-gray-900 mb-3">Product not found</h1>
-          <p className="text-sm text-gray-600 mb-4">The product you are trying to edit could not be found.</p>
-          <CreateButton onClick={()=>router.push("/products")}>Back to Products</CreateButton>
-        </div>
-      </div>
-    );
-  }
-
+  // ======= RENDER — layout sama seperti create, hanya title & tombol =======
   return (
-    <div className="p-6 space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-xl font-semibold text-gray-900">Edit Product</h1>
-        <div className="flex gap-3">
-          <CancelButton onClick={()=>router.push("/products")} />
-          <CreateButton onClick={handleSubmit} disabled={submitting}>{submitting? "Saving..." : "Save Changes"}</CreateButton>
+    <div className="min-h-full">
+      {/* Breadcrumb */}
+      <div className="bg-white border-b border-gray-200 px-6 py-3">
+        <nav className="flex items-center gap-2 text-sm text-gray-500">
+          <span>Products</span>
+          <span className="text-gray-300">›</span>
+          <span className="text-gray-600">Edit</span>
+        </nav>
+      </div>
+
+      {/* Header */}
+      <div className="bg-white border-b border-gray-200 px-6 py-6 flex items-center justify-between">
+        <h1 className="text-2xl font-semibold text-gray-900">Edit Product</h1>
+
+        {/* Language selector */}
+        <div className="flex items-center gap-2">
+          <label htmlFor="language" className="text-sm font-medium text-gray-700">Language:</label>
+          <select
+            id="language"
+            value={language}
+            onChange={(e) => setLanguage(e.target.value as "id" | "en")}
+            className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent text-black"
+          >
+            <option value="id">🇮🇩 Indonesia</option>
+            <option value="en">🇬🇧 English</option>
+          </select>
         </div>
       </div>
 
-      <div className="flex gap-2">
-        <button type="button" onClick={()=>setActiveLang("id")} className={`px-3 py-1 rounded ${activeLang==="id"?"bg-blue-600 text-white":"bg-gray-200 text-gray-800"}`}>Indonesia</button>
-        <button type="button" onClick={()=>setActiveLang("en")} className={`px-3 py-1 rounded ${activeLang==="en"?"bg-blue-600 text-white":"bg-gray-200 text-gray-800"}`}>English</button>
-      </div>
-
-      {errorMessage && <div className="bg-red-50 text-red-700 border border-red-200 rounded-lg p-3 text-sm">{errorMessage}</div>}
-      {successMessage && <div className="bg-green-50 text-green-700 border border-green-200 rounded-lg p-3 text-sm">{successMessage}</div>}
-
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* LEFT */}
-        <div className="lg:col-span-2 space-y-6">
-          {/* Details */}
-          <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 space-y-6">
-            {/* ... (bagian Details, Variants, Media sama persis seperti punyamu di atas) */}
-            {/* (Kode bagian LEFT sengaja dibiarkan sama seperti yang kamu kirim; sudah ada di atas file ini) */}
-          </div>
-
-          {/* Variants & Pricing, Media */}
-          {/* ...semua blok LEFT yang sudah ada tetap sama; tidak diubah selain yang sudah ada di file ini */}
-        </div>
-
-        {/* RIGHT */}
-        <div className="space-y-6">
-          {/* SEO */}
-          <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 space-y-4">
-            <div>
-              <h2 className="text-lg font-semibold text-gray-900">SEO</h2>
-              <p className="text-sm text-gray-500">Optimise discovery across languages with relevant keywords and descriptions.</p>
+      {/* Main */}
+      <div className="bg-gray-50 min-h-screen">
+        <div className="px-6 py-6">
+          {loading && (
+            <div className="mb-6 rounded-md border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-600">
+              Memuat detail produk...
             </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">Tags</label>
-              <textarea rows={2} name="seoTagsInput" value={form.seoTagsInput} onChange={handleTextInputChange}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm text-black"
-                placeholder="summer, sport, leather" />
+          )}
+          {errorMessage && (
+            <div className="mb-6 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+              {errorMessage}
             </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">SEO Keyword ({activeLang.toUpperCase()})</label>
-              <input type="text" value={getLocalizedText(form.seoKeyword, activeLang)}
-                onChange={(e)=>updateMultilingualField("seoKeyword",activeLang,e.target.value)}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm text-black" />
+          )}
+          {successMessage && (
+            <div className="mb-6 rounded-md border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-700">
+              {successMessage}
             </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">SEO Description ({activeLang.toUpperCase()})</label>
-              <textarea rows={3} value={getLocalizedText(form.seoDescription, activeLang)}
-                onChange={(e)=>updateMultilingualField("seoDescription",activeLang,e.target.value)}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm text-black" />
-            </div>
-          </div>
+          )}
 
-          {/* 🆕 Promotion Product (di bawah SEO) */}
-          <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-            <h3 className="text-lg font-semibold text-gray-900 mb-6">Promotion Product</h3>
-            <label className="block text-sm font-medium text-gray-700 mb-2">Promotion Product</label>
-            <AsyncSelect<PromotionOption>
-              cacheOptions
-              defaultOptions
-              isClearable
-              loadOptions={loadPromotionOptions}
-              placeholder="Select Promotion Product"
-              value={promotionProduct}
-              onChange={(sel)=> setPromotionProduct(sel as PromotionOption | null)}
-              formatOptionLabel={(opt)=>(
-                <div className="flex items-center gap-2">
-                  {opt.image ? (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img src={opt.image} alt={opt.label} className="w-6 h-6 rounded object-cover" />
-                  ) : null}
-                  <span>{opt.label}</span>
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            {/* Left: Details (markup sama seperti create) */}
+            {/* >>>> SALIN persis blok “Details”, “ProductGallery”, “Variant”, dan “Product Variant” dari create page <<<< */}
+            {/* ------- START COPY FROM CREATE (dengan handler yg sama) ------- */}
+            <div className="lg:col-span-2 space-y-6">
+              <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+                <h2 className="text-lg font-semibold text-gray-900 mb-6">Details</h2>
+
+                {/* Name */}
+                <div className="mb-6">
+                  <label htmlFor="name" className="block text-sm font-medium text-gray-700 mb-2">
+                    Name <span className="text-red-500">*</span>
+                  </label>
+                  {(["id", "en"] as const).map((langKey) => (
+                    <div key={langKey} className={`${language !== langKey ? "hidden" : "block"}`}>
+                      <input
+                        type="text"
+                        name={`name_${langKey}`}
+                        value={(formData as any)[`name_${langKey}`] || ""}
+                        onChange={(e) => setFormData((prev) => ({ ...prev, [`name_${langKey}`]: e.target.value }))}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm text-black"
+                        placeholder={langKey === "id" ? "Nama produk (Indonesia)" : "Product name (English)"}
+                      />
+                    </div>
+                  ))}
                 </div>
-              )}
-              styles={{
-                control:(base)=>({...base, borderRadius:"0.75rem", borderColor:"#e5e7eb", padding:"2px", minHeight:"44px"}),
-                valueContainer:(base)=>({...base, padding:"0 10px"}),
-                placeholder:(base)=>({...base, color:"#6b7280"}),
-              }}
-            />
+
+                {/* Slug */}
+                <div className="mb-6">
+                  <label htmlFor="slug" className="block text-sm font-medium text-gray-700 mb-2">
+                    Slug <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    id="slug"
+                    name="slug"
+                    value={formData.slug}
+                    onChange={handleInputChange}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm text-black"
+                    placeholder="product-slug"
+                  />
+                </div>
+
+                {/* Featured */}
+                <div className="mb-6">
+                  <div className="flex items-center gap-3">
+                    <ToggleSwitch checked={formData.featured} onChange={handleToggleFeatured} />
+                    <label className="text-sm font-medium text-gray-700">Featured</label>
+                  </div>
+                </div>
+
+                {/* Status */}
+                <div className="mb-6">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <ToggleSwitch checked={formData.status} onChange={handleToggleStatus} />
+                      <label className="text-sm font-medium text-gray-700">Status</label>
+                    </div>
+                    <span
+                      className={
+                        "inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium " +
+                        (formData.status
+                          ? "bg-green-50 text-green-700 ring-1 ring-inset ring-green-200"
+                          : "bg-gray-100 text-gray-600 ring-1 ring-inset ring-gray-300")
+                      }
+                    >
+                      {formData.status ? "Active" : "Inactive"}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Description */}
+                <div className="mb-6">
+                  <label htmlFor="description" className="block text-sm font-medium text-gray-700 mb-2">
+                    Description <span className="text-red-500">*</span>
+                  </label>
+                  {(["id", "en"] as const).map((langKey) => (
+                    <div key={langKey} className={`${language !== langKey ? "hidden" : "block"}`}>
+                      <textarea
+                        name={`description_${langKey}`}
+                        value={(formData as any)[`description_${langKey}`] || ""}
+                        onChange={(e) => setFormData((prev) => ({ ...prev, [`description_${langKey}`]: e.target.value }))}
+                        rows={8}
+                        className="w-full px-3 py-2 border border-gray-300 border-t-0 rounded-b-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm text-black resize-none"
+                        placeholder={langKey === "id" ? "Deskripsi produk (Indonesia)" : "Product description (English)"}
+                      />
+                    </div>
+                  ))}
+                </div>
+
+                {/* Category */}
+                <div className="mb-6">
+                  <label htmlFor="category" className="block text-sm font-medium text-gray-700 mb-2">
+                    Category <span className="text-red-500">*</span>
+                  </label>
+                  <AsyncSelect
+                    cacheOptions
+                    defaultOptions
+                    isClearable
+                    loadOptions={loadCategoryOptions}
+                    placeholder="Search and select category..."
+                    onChange={(selected: any) =>
+                      setFormData((prev) => ({
+                        ...prev,
+                        category: selected?.label || "",
+                        category_id: selected?.value ?? null,
+                      }))
+                    }
+                    formatOptionLabel={(option: any) => (
+                      <div className="flex items-center gap-2">
+                        {option.image && (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img src={option.image} alt={option.label} className="w-6 h-6 rounded object-cover" />
+                        )}
+                        <span>{option.label}</span>
+                      </div>
+                    )}
+                    styles={{
+                      control: (base: any) => ({
+                        ...base,
+                        borderRadius: "0.5rem",
+                        borderColor: "#d1d5db",
+                        padding: "2px",
+                      }),
+                    }}
+                    value={
+                      formData.category_id
+                        ? { value: formData.category_id, label: formData.category }
+                        : null
+                    }
+                  />
+                </div>
+
+                {/* Base Price */}
+                <div className="mb-6">
+                  <label htmlFor="price" className="block text-sm font-medium text-gray-700 mb-2">
+                    Price (Rp) <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="number"
+                    id="price"
+                    name="price"
+                    value={formData.price}
+                    onChange={handleInputChange}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm text-black"
+                    placeholder="Product price"
+                    min={0}
+                  />
+                </div>
+
+                {/* Heel Height */}
+                <div className="mb-6">
+                  <label htmlFor="heel_height_cm" className="block text-sm font-medium text-gray-700 mb-2">
+                    Heel Height (cm)
+                  </label>
+                  <input
+                    type="number"
+                    id="heel_height_cm"
+                    name="heel_height_cm"
+                    value={(formData as any).heel_height_cm ?? ""}
+                    onChange={handleInputChange}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm text-black"
+                    placeholder="e.g. 12"
+                    min={0}
+                  />
+                </div>
+              </div>
+
+              <ProductGallery
+                galleries={galleries}
+                onAddGallery={handleAddGallery}
+                onRemoveGallery={handleRemoveGallery}
+                onGalleryChange={handleGalleryChange}
+              />
+
+              {/* Variants builder + pricing — sama dengan create */}
+              <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+                <div className="flex items-center justify-between mb-6">
+                  <h2 className="text-lg font-semibold text-gray-900">Variant</h2>
+                  <button
+                    type="button"
+                    onClick={handleAddVariant}
+                    disabled={variants.length >= 3}
+                    className={`px-4 py-2 text-sm font-medium rounded-lg transition-colors ${
+                      variants.length >= 3
+                        ? "text-gray-400 bg-gray-100 border border-gray-200 cursor-not-allowed"
+                        : "text-blue-600 bg-blue-50 border border-blue-200 hover:bg-blue-100"
+                    }`}
+                  >
+                    Add Variant {variants.length >= 3 ? "(Max 3)" : ""}
+                  </button>
+                </div>
+
+                <div className="space-y-4 mb-8">
+                  {variants.map((variant, variantIndex) => (
+                    <div key={variant.id} className="border border-gray-200 rounded-lg p-4 bg-gray-50">
+                      <div className="flex items-center justify-between mb-4">
+                        <div className="flex items-center gap-3">
+                          <span className="text-sm font-medium text-gray-700">Variant {variantIndex + 1}</span>
+                          <input
+                            type="text"
+                            value={language === "id" ? variant.name.id || "" : variant.name.en || ""}
+                            onChange={(e) => handleVariantNameChange(variant.id, e.target.value, language)}
+                            className="px-3 py-1 border border-gray-300 rounded text-sm text-black bg-white"
+                            placeholder={language === "id" ? "Nama varian (Indonesia)" : "Variant name (English)"}
+                          />
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveVariant(variant.id)}
+                          className="text-gray-400 hover:text-red-600 text-lg"
+                        >
+                          ×
+                        </button>
+                      </div>
+
+                      <div className="space-y-2">
+                        <label className="block text-sm font-medium text-gray-700">Option</label>
+                        <div className="flex flex-wrap gap-2">
+                          {variant.options.map((option, optionIndex) => (
+                            <div key={optionIndex} className="flex items-center gap-1">
+                              <input
+                                type="text"
+                                value={language === "id" ? option.id || "" : option.en || ""}
+                                onChange={(e) => handleOptionChange(variant.id, optionIndex, e.target.value, language)}
+                                className="px-3 py-1 border border-gray-300 rounded text-sm text-black bg-white w-24"
+                                placeholder={
+                                  optionIndex === variant.options.length - 1
+                                    ? language === "id" ? "Isi di sini" : "Input here"
+                                    : "Option"
+                                }
+                              />
+                              {variant.options.length > 1 && (option.id || option.en).trim() !== "" && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleRemoveOption(variant.id, optionIndex)}
+                                  className="text-red-500 hover:text-red-700 text-sm w-4 h-4 flex items-center justify-center"
+                                >
+                                  <DeleteIcon label="" onClick={() => handleRemoveOption(variant.id, optionIndex)} className="w-4 h-4" />
+                                </button>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Pricing section */}
+                {variants.some((v) => v.options.some((o) => (o.id || o.en).trim() !== "")) && (
+                  <div className="border-t border-gray-200 pt-6">
+                    <h3 className="text-lg font-semibold text-gray-900 mb-4">Product Variant</h3>
+
+                    <div className="mb-6">
+                      <h4 className="text-sm font-medium text-gray-700 mb-3">Set Pricing</h4>
+                      <div className="space-y-3">
+                        <label className="flex items-center gap-3">
+                          <input
+                            type="radio"
+                            name="pricingType"
+                            value="single"
+                            checked={pricingType === "single"}
+                            onChange={(e) => setPricingType(e.target.value as "single" | "individual")}
+                            className="text-blue-600"
+                          />
+                          <span className="text-sm text-gray-700">Single Price for All Variant</span>
+                        </label>
+                        <label className="flex items-center gap-3">
+                          <input
+                            type="radio"
+                            name="pricingType"
+                            value="individual"
+                            checked={pricingType === "individual"}
+                            onChange={(e) => setPricingType(e.target.value as "single" | "individual")}
+                            className="text-blue-600"
+                          />
+                          <span className="text-sm text-gray-700">Set Individual Prices</span>
+                        </label>
+                      </div>
+                    </div>
+
+                    {/* 1 dimensi */}
+                    {pricingType === "individual" && validVariantCount === 1 && (
+                      <div className="space-y-4">
+                        {Object.keys(groupedCombinations()).map((firstOption) => (
+                          <div key={firstOption} className="border border-gray-200 rounded-lg">
+                            <div className="bg-gray-50 px-4 py-3 border-b border-gray-200 flex items-center justify-between">
+                              <h5 className="font-medium text-gray-900">{firstOption}</h5>
+                              <button
+                                type="button"
+                                onClick={() => toggleGroup(firstOption)}
+                                className="text-gray-400 hover:text-gray-600"
+                                aria-label={`Toggle ${firstOption}`}
+                              >
+                                <svg className={`w-4 h-4 transition-transform ${isGroupOpen(firstOption) ? "" : "rotate-180"}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                                </svg>
+                              </button>
+                            </div>
+
+                            {isGroupOpen(firstOption) && (
+                              <div className="p-4">
+                                <div className="flex items-center gap-3 text-sm">
+                                  <span className="text-gray-600">Rp</span>
+                                  <input
+                                    type="number"
+                                    value={groupPrices[firstOption] ?? ""}
+                                    onChange={(e) => setGroupPrices((prev) => ({ ...prev, [firstOption]: e.target.value }))}
+                                    className="px-2 py-1 border border-gray-300 rounded text-sm text-black w-32"
+                                    placeholder="0"
+                                    min={0}
+                                  />
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {/* >=2 dimensi */}
+                    {pricingType === "individual" && validVariantCount >= 2 && (
+                      <div className="space-y-4">
+                        {Object.entries(groupedCombinations()).map(([firstOption, combinations]) => (
+                          <div key={firstOption} className="border border-gray-200 rounded-lg">
+                            <div className="bg-gray-50 px-4 py-3 border-b border-gray-200 flex items-center justify-between">
+                              <h5 className="font-medium text-gray-900">{firstOption}</h5>
+                              <button
+                                type="button"
+                                onClick={() => toggleGroup(firstOption)}
+                                className="text-gray-400 hover:text-gray-600"
+                                aria-label={`Toggle ${firstOption}`}
+                              >
+                                <svg className={`w-4 h-4 transition-transform ${isGroupOpen(firstOption) ? "" : "rotate-180"}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                                </svg>
+                              </button>
+                            </div>
+
+                            {isGroupOpen(firstOption) && (
+                              <div className="p-4">
+                                {Array.from(new Set(combinations.map((c) => c[1])))
+                                  .filter(Boolean)
+                                  .map((secondOption) => (
+                                    <div key={String(secondOption)} className="mb-4">
+                                      <div className="bg-gray-100 px-3 py-2 border border-gray-200 rounded flex items-center justify-between">
+                                        <h6 className="font-medium text-gray-800">{String(secondOption)}</h6>
+                                        <button
+                                          type="button"
+                                          onClick={() => toggleSub(firstOption, String(secondOption))}
+                                          className="text-gray-400 hover:text-gray-600"
+                                          aria-label={`Toggle ${firstOption} - ${String(secondOption)}`}
+                                        >
+                                          <svg className={`w-4 h-4 transition-transform ${isSubOpen(firstOption, String(secondOption)) ? "" : "rotate-180"}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                                          </svg>
+                                        </button>
+                                      </div>
+
+                                      {isSubOpen(firstOption, String(secondOption)) && (
+                                        <div className="mt-2 space-y-2">
+                                          {combinations
+                                            .filter((c) => c[1] === secondOption)
+                                            .map((combination, idx) => {
+                                              const valid = getValidVariants();
+                                              const enParts = combination.map((val, pos) => {
+                                                const v = valid[pos];
+                                                const found = v?.options.find(
+                                                  (o) => (o.en || o.id) === val || (o.id || o.en) === val
+                                                );
+                                                return found ? found.en || found.id : String(val);
+                                              });
+                                              const key = enParts.join("-");
+                                              const thirdOption = combination[2];
+                                              return (
+                                                <div key={`${key}-${idx}`} className="flex items-center gap-3 text-sm">
+                                                  <span className="w-24 text-gray-600">{thirdOption || "Price"}</span>
+                                                  <span className="text-gray-500">Rp</span>
+                                                  <input
+                                                    type="number"
+                                                    value={individualPrices[key] || ""}
+                                                    onChange={(e) => setIndividualPrices((p) => ({ ...p, [key]: e.target.value }))}
+                                                    className="px-2 py-1 border border-gray-300 rounded text-sm text-black w-32"
+                                                    placeholder="0"
+                                                    min={0}
+                                                  />
+                                                </div>
+                                              );
+                                            })}
+                                        </div>
+                                      )}
+                                    </div>
+                                  ))}
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Right - SEO + Promotion Product (markup sama) */}
+            <div className="space-y-6">
+              <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+                <h3 className="text-lg font-semibold text-gray-900 mb-6">SEO</h3>
+                <div className="mb-6">
+                  <label htmlFor="tags" className="block text-sm font-medium text-gray-700 mb-2">Tags</label>
+                  <input
+                    type="text"
+                    id="tags"
+                    name="tags"
+                    value={formData.tags}
+                    onChange={handleInputChange}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm text-black"
+                    placeholder="Product tags"
+                  />
+                </div>
+                <div className="mb-6">
+                  <label htmlFor="keyword" className="block text-sm font-medium text-gray-700 mb-2">Keyword</label>
+                  {(["id", "en"] as const).map((langKey) => (
+                    <div key={langKey} className={`${language !== langKey ? "hidden" : "block"}`}>
+                      <input
+                        type="text"
+                        name={`keyword_${langKey}`}
+                        value={(formData as any)[`keyword_${langKey}`] || ""}
+                        onChange={(e) => setFormData((prev) => ({ ...prev, [`keyword_${langKey}`]: e.target.value }))}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm text-black"
+                        placeholder={langKey === "id" ? "Kata kunci SEO (Indonesia)" : "SEO keywords (English)"}
+                      />
+                    </div>
+                  ))}
+                </div>
+                <div className="mb-6">
+                  <label htmlFor="seoDescription" className="block text-sm font-medium text-gray-700 mb-2">Description</label>
+                  {(["id", "en"] as const).map((langKey) => (
+                    <div key={langKey} className={`${language !== langKey ? "hidden" : "block"}`}>
+                      <textarea
+                        name={`seoDescription_${langKey}`}
+                        value={(formData as any)[`seoDescription_${langKey}`] || ""}
+                        onChange={(e) => setFormData((prev) => ({ ...prev, [`seoDescription_${langKey}`]: e.target.value }))}
+                        rows={6}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm text-black resize-none"
+                        placeholder={langKey === "id" ? "Deskripsi SEO (Indonesia)" : "SEO description (English)"}
+                      />
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+                <h3 className="text-lg font-semibold text-gray-900 mb-6">Promotion Product</h3>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Promotion Product</label>
+                <AsyncSelect
+                  cacheOptions
+                  defaultOptions
+                  isClearable
+                  loadOptions={loadPromotionOptions}
+                  placeholder="Select Promotion Product"
+                  onChange={(selected: any) => setPromotionProduct(selected)}
+                  value={promotionProduct}
+                  formatOptionLabel={(option: any) => (
+                    <div className="flex items-center gap-2">
+                      {option.image && (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img src={option.image} alt={option.label} className="w-6 h-6 rounded object-cover" />
+                      )}
+                      <span>{option.label}</span>
+                    </div>
+                  )}
+                  styles={{
+                    control: (base: any) => ({
+                      ...base,
+                      borderRadius: "0.75rem",
+                      borderColor: "#e5e7eb",
+                      padding: "2px",
+                      minHeight: "44px",
+                    }),
+                    valueContainer: (base: any) => ({ ...base, padding: "0 10px" }),
+                    placeholder: (base: any) => ({ ...base, color: "#6b7280" }),
+                  }}
+                />
+              </div>
+            </div>
+            {/* ------- END COPY ------- */}
+          </div>
+
+          {/* Actions */}
+          <div className="mt-8 flex items-center gap-4">
+            <UpdateButton onClick={handleUpdate} disabled={submitting}>
+              {submitting ? "Menyimpan..." : "Update"}
+            </UpdateButton>
+            <CancelButton onClick={() => router.push("/products")} disabled={submitting} />
           </div>
         </div>
       </div>

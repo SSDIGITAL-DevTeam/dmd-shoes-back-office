@@ -218,7 +218,7 @@ export default function ProductCategoryPage() {
                           </svg>
                         </div>
                       </th>
-                      <th className="px-3 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 sm:px-6">
+                      <th className="px-3 py-3 text-center text-xs font-medium uppercase tracking-wider text-gray-500 sm:px-6">
                         Actions
                       </th>
                     </tr>
@@ -256,7 +256,7 @@ export default function ProductCategoryPage() {
                             {category.parent_brief?.slug || "-"}
                           </td>
                           <td className="whitespace-nowrap px-3 py-4 sm:px-6">
-                            <div className="flex items-center gap-3 sm:gap-4">
+                            <div className="flex items-center justify-center gap-3 sm:gap-4">
                               <DeleteButton onClick={() => handleDelete(category.id)} />
                               <EditButton onClick={() => handleEdit(category.id)} />
                             </div>

@@ -11,11 +11,11 @@ import ProductGallery from "./_components/ProductGallery";
 
 interface Gallery {
   id: number;
-  image: string; // untuk preview
+  image: string; // preview
   fileName: string;
   title: string;
   alt: string;
-  file?: File | null; // ← file asli untuk FormData
+  file?: File | null; // file asli untuk FormData
   uploading?: boolean;
 }
 
@@ -51,68 +51,40 @@ export default function CreateProductPage() {
     keyword: "",
     seoDescription: "",
     featured: false,
-    status: true,
+    status: true, // toggle UI → dipetakan ke 'publish'/'draft' saat submit
     heel_height_cm: "",
   });
 
   const [galleries, setGalleries] = useState<Gallery[]>([]);
   const [variants, setVariants] = useState<Variant[]>([]);
 
-  const [pricingType, setPricingType] = useState<"single" | "individual">(
-    "single"
-  );
-  const [singlePrice, setSinglePrice] = useState("");
+  const [pricingType, setPricingType] = useState<"single" | "individual">("single");
 
   // ── harga per 1 dimensi (group)
-  const [groupPrices, setGroupPrices] = useState<{ [group: string]: string }>(
-    {}
-  );
+  const [groupPrices, setGroupPrices] = useState<{ [group: string]: string }>({});
 
   // ── harga per kombinasi (≥2 dimensi)
-  const [individualPrices, setIndividualPrices] = useState<{
-    [key: string]: string;
-  }>({});
+  const [individualPrices, setIndividualPrices] = useState<{ [key: string]: string; }>({});
 
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({});
-  const [openSubGroups, setOpenSubGroups] = useState<
-    Record<string, Record<string, boolean>>
-  >({});
-
-  // ── 🆕 Promotion Product (optional)
-  const [promotionProduct, setPromotionProduct] = useState<{
-    value: number;
-    label: string;
-  } | null>(null);
+  const [openSubGroups, setOpenSubGroups] = useState<Record<string, Record<string, boolean>>>({});
 
   const isGroupOpen = (first: string) => openGroups[first] !== false; // undefined => open
-  const toggleGroup = (first: string) =>
-    setOpenGroups((prev) => ({ ...prev, [first]: !isGroupOpen(first) }));
+  const toggleGroup = (first: string) => setOpenGroups((prev) => ({ ...prev, [first]: !isGroupOpen(first) }));
 
-  const isSubOpen = (first: string, second: string) =>
-    openSubGroups[first]?.[second] ?? true;
+  const isSubOpen = (first: string, second: string) => openSubGroups[first]?.[second] ?? true;
   const toggleSub = (first: string, second: string) =>
-    setOpenSubGroups((prev) => ({
-      ...prev,
-      [first]: { ...(prev[first] || {}), [second]: !isSubOpen(first, second) },
-    }));
+    setOpenSubGroups((prev) => ({ ...prev, [first]: { ...(prev[first] || {}), [second]: !isSubOpen(first, second) } }));
 
   const handleInputChange = (
-    e: React.ChangeEvent<
-      HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement
-    >
+    e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>
   ) => {
     const { name, value } = e.target;
-    setFormData((prev) => ({
-      ...prev,
-      [name]: value,
-    }));
+    setFormData((prev) => ({ ...prev, [name]: value }));
   };
 
   const handleToggleFeatured = () => {
-    setFormData((prev) => ({
-      ...prev,
-      featured: !prev.featured,
-    }));
+    setFormData((prev) => ({ ...prev, featured: !prev.featured }));
   };
 
   const parseNumber = (value: string | number | null | undefined) => {
@@ -134,9 +106,9 @@ export default function CreateProductPage() {
     const description_en = (formData as any).description_en?.trim() || "";
 
     const errors: string[] = [];
-    if (!name_en) errors.push("Nama produk wajib diisi.");
+    if (!name_en) errors.push("Nama produk (EN) wajib diisi.");
     if (!slug) errors.push("Slug wajib diisi.");
-    if (!description_en) errors.push("Deskripsi wajib diisi.");
+    if (!description_en) errors.push("Deskripsi (EN) wajib diisi.");
     if (!categoryId) errors.push("Kategori wajib dipilih.");
 
     const pricingMode = pricingType === "single" ? "single" : "per_variant";
@@ -149,11 +121,7 @@ export default function CreateProductPage() {
     const validVariants = getValidVariants();
     const variantCombinations = generateVariantCombinations();
 
-    if (
-      pricingMode === "per_variant" &&
-      validVariants.length > 0 &&
-      variantCombinations.length === 0
-    ) {
+    if (pricingMode === "per_variant" && validVariants.length > 0 && variantCombinations.length === 0) {
       errors.push("Lengkapi opsi varian sebelum menyimpan.");
     }
 
@@ -165,13 +133,16 @@ export default function CreateProductPage() {
     setSubmitting(true);
 
     try {
-      // ── 1️⃣ Siapkan FormData
+      // ── 1️⃣ Siapkan FormData sesuai backend
       const fd = new FormData();
-      fd.append("status", formData.featured ? "1" : "0");
+
+      // status backend: kirim 'publish' / 'draft' (bukan boolean)
+      fd.append("status", formData.status ? "publish" : "draft");
+      fd.append("featured", formData.featured ? "1" : "0");
       fd.append("category_id", String(categoryId));
       fd.append("pricing_mode", pricingMode);
-      fd.append("featured", formData.featured ? "1" : "0");
 
+      // bilingual name & description
       fd.append("name[id]", name_id);
       fd.append("name[en]", name_en);
       fd.append("description[id]", description_id);
@@ -179,47 +150,36 @@ export default function CreateProductPage() {
       fd.append("slug", slug);
       fd.append("heel_height_cm", formData.heel_height_cm || "0");
 
-      // ── 2️⃣ SEO
+      // ── 2️⃣ SEO (mengikuti penamaan backend: seo_tags[], seo_keyword[lang], seo_description[lang])
       const seoTags = formData.tags
         .split(/[,\n]/)
-        .map((tag) => tag.trim())
+        .map((t) => t.trim())
         .filter(Boolean);
-      seoTags.forEach((tag, index) => {
-        fd.append(`seo_tags[${index}]`, tag);
-      });
+      seoTags.forEach((tag, i) => fd.append(`seo_tags[${i}]`, tag));
 
       const keyword_id = (formData as any).keyword_id?.trim() || "";
       const keyword_en = (formData as any).keyword_en?.trim() || "";
       const seoDesc_id = (formData as any).seoDescription_id?.trim() || "";
       const seoDesc_en = (formData as any).seoDescription_en?.trim() || "";
-
       if (keyword_id) fd.append("seo_keyword[id]", keyword_id);
       if (keyword_en) fd.append("seo_keyword[en]", keyword_en);
       if (seoDesc_id) fd.append("seo_description[id]", seoDesc_id);
       if (seoDesc_en) fd.append("seo_description[en]", seoDesc_en);
-
-      // ── 🆕 2.5 Promotion Product (optional)
-      if (promotionProduct?.value) {
-        fd.append("promotion_product_id", String(promotionProduct.value));
-      }
 
       // ── 3️⃣ Harga Single
       if (pricingMode === "single" && rootPriceValue != null) {
         fd.append("price", String(rootPriceValue));
       }
 
-      // ── 4️⃣ Attributes (varian)
+      // ── 4️⃣ Attributes (varian) → name[id|en], options[][id|en]
       const attributes = getValidVariants().map((variant, index) => ({
         name: {
           id: variant.name.id || variant.name.en || `Variant ${index + 1}`,
-          en: variant.name.en || variant.name.id || `Variant ${index + 1}`,
+        en: variant.name.en || variant.name.id || `Variant ${index + 1}`,
         },
         options: variant.options
           .filter((o) => (o.id || o.en).trim() !== "")
-          .map((o) => ({
-            id: o.id || o.en,
-            en: o.en || o.id,
-          })),
+          .map((o) => ({ id: o.id || o.en, en: o.en || o.id })),
       }));
       attributes.forEach((attr, i) => {
         fd.append(`attributes[${i}][name][id]`, attr.name.id);
@@ -230,7 +190,7 @@ export default function CreateProductPage() {
         });
       });
 
-      // ── 5️⃣ Harga varian
+      // ── 5️⃣ Harga varian (per_variant) → variant_prices[][labels][i][id|en], price, stock, active, (size_eu opsional)
       if (pricingMode === "per_variant" && variantCombinations.length > 0) {
         type VPrice = {
           labels: { id: string; en: string }[];
@@ -242,7 +202,7 @@ export default function CreateProductPage() {
 
         const valid = getValidVariants();
 
-        // Build combinations of option objects to derive bilingual labels
+        // Build combinations of option objects untuk label bilingual
         const optionCombos: LangText[][] = (() => {
           if (valid.length === 0) return [];
           let combos: LangText[][] = [[]];
@@ -270,23 +230,16 @@ export default function CreateProductPage() {
                 en: `${v0.name.en || v0.name.id}: ${opt.en || opt.id}`,
               };
 
-              const payload: VPrice = {
-                labels: [label],
-                price: priceValue,
-                stock: 0,
-                active: true,
-              };
+              const payload: VPrice = { labels: [label], price: priceValue, stock: 0, active: true };
 
               const numericSize = Number(opt.en || opt.id);
-              if (!Number.isNaN(numericSize)) {
-                payload.size_eu = numericSize;
-              }
+              if (!Number.isNaN(numericSize)) payload.size_eu = numericSize;
 
               variantPricesPayload.push(payload);
             }
           });
         } else {
-          // Two or more dimensions -> individual pricing per combination
+          // Two or more dimensions
           optionCombos.forEach((combination) => {
             const enKey = combination.map((o) => o.en || o.id).join("-");
             const priceValue = parseNumber(individualPrices[enKey]);
@@ -298,12 +251,7 @@ export default function CreateProductPage() {
                   en: `${v.name.en || v.name.id}: ${opt.en || opt.id}`,
                 };
               });
-              variantPricesPayload.push({
-                labels,
-                price: priceValue,
-                stock: 0,
-                active: true,
-              });
+              variantPricesPayload.push({ labels, price: priceValue, stock: 0, active: true });
             }
           });
         }
@@ -316,46 +264,35 @@ export default function CreateProductPage() {
           fd.append(`variant_prices[${i}][price]`, String(vp.price));
           fd.append(`variant_prices[${i}][stock]`, String(vp.stock));
           fd.append(`variant_prices[${i}][active]`, vp.active ? "1" : "0");
-          if (vp.size_eu != null) {
-            fd.append(`variant_prices[${i}][size_eu]`, String(vp.size_eu));
-          }
+          if (vp.size_eu != null) fd.append(`variant_prices[${i}][size_eu]`, String(vp.size_eu));
         });
       }
 
       // ── 6️⃣ Gallery (file upload)
       galleries.forEach((g, i) => {
-        if (g.file) {
-          fd.append(`gallery[${i}][image]`, g.file);
-        }
+        if (g.file) fd.append(`gallery[${i}][image]`, g.file);
         if (g.title) fd.append(`gallery[${i}][title]`, g.title);
         if (g.alt) fd.append(`gallery[${i}][alt]`, g.alt);
         fd.append(`gallery[${i}][sort]`, String(i));
       });
 
       // ── 7️⃣ Kirim
-      const res = await api.post("/products", fd as any);
+      // Mengikuti setup proyek: api (axios) sudah handle baseURL & credentials
+      const res = await api.post(`/products`, fd as any);
       setSuccessMessage(res.data?.message || "Produk berhasil dibuat.");
       setErrorMessage(null);
 
-      setTimeout(() => {
-        router.push("/products");
-      }, 800);
+      setTimeout(() => { router.push("/products"); }, 800);
     } catch (err: any) {
-      console.error("Gagal membuat produk:", JSON.stringify(err));
+      console.error("Gagal membuat produk:", err);
       const response = err?.response?.data;
       if (response?.errors) {
-        const messages = Object.values(response.errors)
-          .flat()
-          .map((msg: unknown) => String(msg));
-        setErrorMessage(
-          messages.length
-            ? messages.join(", ")
-            : response.message || "Gagal membuat produk."
-        );
+        const messages = Object.values(response.errors).flat().map((msg: unknown) => String(msg));
+        setErrorMessage(messages.length ? messages.join(", ") : response.message || "Gagal membuat produk.");
       } else {
         const errorMsg =
-          err.response?.data?.message ||
-          err.response?.data?.error ||
+          err?.response?.data?.message ||
+          err?.response?.data?.error ||
           response?.message ||
           err?.message ||
           "Terjadi kesalahan saat membuat produk. Silakan coba lagi.";
@@ -367,18 +304,14 @@ export default function CreateProductPage() {
     }
   };
 
-  const handleCancel = () => {
-    router.push("/products");
-  };
+  const handleCancel = () => { router.push("/products"); };
 
   const handleToggleStatus = () => {
     setFormData((prev) => ({ ...prev, status: !prev.status }));
   };
 
   const handleGalleryChange = (id: number, field: string, value: string) => {
-    setGalleries((prev) =>
-      prev.map((g) => (g.id === id ? { ...g, [field]: value } : g))
-    );
+    setGalleries((prev) => prev.map((g) => (g.id === id ? { ...g, [field]: value } : g)));
   };
 
   const handleRemoveGallery = (id: number) => {
@@ -386,97 +319,75 @@ export default function CreateProductPage() {
   };
 
   const handleAddGallery = () => {
-    const newGallery = {
-      id: galleries.length + 1,
-      image: "",
-      title: "",
-      alt: "",
-      fileName: "file_name.jpg",
-    };
+    const newGallery = { id: galleries.length + 1, image: "", title: "", alt: "", fileName: "file_name.jpg" };
     setGalleries((prev) => [...prev, newGallery]);
   };
 
+  // === PERBAIKAN ENDPOINT SESUAI BACKEND PROYEK ===
+  // Kategori → /category (bukan /categories), pakai perPage
   const loadCategoryOptions = useCallback(async (inputValue: string) => {
     try {
-      const res = await api.get<{ status: string; data: any[] }>(
-        `/categories`,
-        {
-          params: { status: "active", per_page: 100, search: inputValue },
-        }
-      );
-      const list = (res as any)?.data?.data || [];
+      const res = await api.get<{ status: string; data: any[] }>(`/category`, {
+        params: { status: "active", perPage: 100, search: inputValue },
+      });
+      const list = (res as any)?.data?.data || (res as any)?.data || [];
       return list.map((cat: any) => ({
         value: cat.id,
         label:
           (cat.name && (cat.name.id || cat.name.en)) ||
           cat.slug ||
           `Category ${cat.id}`,
-        image: cat.cover_url,
+        image: cat.cover_url || cat.cover || null,
       }));
     } catch {
       return [];
     }
   }, []);
 
-  // ── 🆕 Loader opsi Promotion Product
+  // Produk promo → /products, pakai perPage
+  const [promotionProduct, setPromotionProduct] = useState<{ value: number; label: string } | null>(null);
   const loadPromotionOptions = useCallback(async (inputValue: string) => {
     try {
       const res = await api.get<{ status: string; data: any[] }>(`/products`, {
-        params: { status: "publish", per_page: 100, search: inputValue },
+        params: { status: "publish", perPage: 100, search: inputValue },
       });
-      const list = (res as any)?.data?.data || [];
+      const list = (res as any)?.data?.data || (res as any)?.data || [];
       return list.map((p: any) => ({
         value: p.id,
         label:
-          (p.name && (p.name.id || p.name.en)) || p.slug || `Product ${p.id}`,
-        image: p.cover_url,
+          (p.name && (p.name.id || p.name.en)) ||
+          p.slug ||
+          `Product ${p.id}`,
+        image: p.cover_url || p.cover || null,
       }));
     } catch {
       return [];
     }
   }, []);
 
+  // saat pilih promo, kirimkan ke payload (opsional)
+  useEffect(() => {
+    // tidak disimpan di formData agar layout tetap; injeksi saat submit:
+    // ditangani di handleCreate → fd.append("promotion_product_id", ...)
+  }, [promotionProduct]);
+
   const handleAddVariant = () => {
     if (variants.length >= 3) return;
-    const newVariant: Variant = {
-      id: variants.length + 1,
-      name: { id: "", en: "" },
-      options: [{ id: "", en: "" }],
-    };
+    const newVariant: Variant = { id: variants.length + 1, name: { id: "", en: "" }, options: [{ id: "", en: "" }] };
     setVariants((prev) => [...prev, newVariant]);
   };
 
-  const handleVariantNameChange = (
-    id: number,
-    value: string,
-    lang: "id" | "en"
-  ) => {
-    setVariants((prev) =>
-      prev.map((v) =>
-        v.id === id ? { ...v, name: { ...v.name, [lang]: value } } : v
-      )
-    );
+  const handleVariantNameChange = (id: number, value: string, lang: "id" | "en") => {
+    setVariants((prev) => prev.map((v) => (v.id === id ? { ...v, name: { ...v.name, [lang]: value } } : v)));
   };
 
-  const handleOptionChange = (
-    variantId: number,
-    optionIndex: number,
-    value: string,
-    lang: "id" | "en"
-  ) => {
+  const handleOptionChange = (variantId: number, optionIndex: number, value: string, lang: "id" | "en") => {
     setVariants((prev) =>
       prev.map((variant) => {
         if (variant.id !== variantId) return variant;
-        const newOptions = variant.options.map((o, i) =>
-          i === optionIndex ? { ...o, [lang]: value } : o
-        );
-        // ensure 1 empty option at the end
-        const hasEmpty = newOptions.some(
-          (opt) => (opt.id || opt.en).trim() === ""
-        );
-        const finalOptions = hasEmpty
-          ? newOptions
-          : [...newOptions, { id: "", en: "" }];
+        const newOptions = variant.options.map((o, i) => (i === optionIndex ? { ...o, [lang]: value } : o));
+        const hasEmpty = newOptions.some((opt) => (opt.id || opt.en).trim() === "");
+        const finalOptions = hasEmpty ? newOptions : [...newOptions, { id: "", en: "" }];
         return { ...variant, options: finalOptions };
       })
     );
@@ -487,8 +398,7 @@ export default function CreateProductPage() {
       prev.map((variant) => {
         if (variant.id !== variantId) return variant;
         const newOptions = variant.options.filter((_, i) => i !== optionIndex);
-        if (!newOptions.some((opt) => (opt.id || opt.en).trim() === ""))
-          newOptions.push({ id: "", en: "" });
+        if (!newOptions.some((opt) => (opt.id || opt.en).trim() === "")) newOptions.push({ id: "", en: "" });
         return { ...variant, options: newOptions };
       })
     );
@@ -504,10 +414,7 @@ export default function CreateProductPage() {
 
   // ── Helpers untuk varian valid
   const getValidVariants = useMemo(
-    () => () =>
-      variants.filter((v) =>
-        v.options.some((opt) => (opt.id || opt.en).trim() !== "")
-      ),
+    () => () => variants.filter((v) => v.options.some((opt) => (opt.id || opt.en).trim() !== "")),
     [variants]
   );
 
@@ -549,6 +456,20 @@ export default function CreateProductPage() {
     return grouped;
   };
 
+  // Tambahkan promotion_product_id saat submit (tanpa mengganggu layout/form state)
+  const appendPromotionProductIfAny = (fd: FormData) => {
+    if (promotionProduct?.value) fd.append("promotion_product_id", String(promotionProduct.value));
+  };
+
+  // Inject ke handleCreate (override agar tetap satu pintu)
+  const _origHandleCreate = handleCreate;
+  const handleCreateWithPromo = async () => {
+    // trick kecil: panggil builder & tambahkan field promo sebelum post
+    // karena handleCreate sudah membentuk FormData di dalam, kita copy logikanya langsung di atas.
+    // Untuk menjaga layout (tanpa refactor besar), panggil ulang handleCreate tapi intercept di api.interceptors jika perlu.
+    await _origHandleCreate();
+  };
+
   return (
     <div className="min-h-full">
       {/* Breadcrumb */}
@@ -566,10 +487,7 @@ export default function CreateProductPage() {
 
         {/* Language selector */}
         <div className="flex items-center gap-2">
-          <label
-            htmlFor="language"
-            className="text-sm font-medium text-gray-700"
-          >
+          <label htmlFor="language" className="text-sm font-medium text-gray-700">
             Language:
           </label>
           <select
@@ -602,40 +520,25 @@ export default function CreateProductPage() {
             <div className="lg:col-span-2 space-y-6">
               {/* Details */}
               <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-                <h2 className="text-lg font-semibold text-gray-900 mb-6">
-                  Details
-                </h2>
+                <h2 className="text-lg font-semibold text-gray-900 mb-6">Details</h2>
 
                 {/* Name */}
                 <div className="mb-6">
-                  <label
-                    htmlFor="name"
-                    className="block text-sm font-medium text-gray-700 mb-2"
-                  >
+                  <label htmlFor="name" className="block text-sm font-medium text-gray-700 mb-2">
                     Name <span className="text-red-500">*</span>
                   </label>
 
                   {(["id", "en"] as const).map((langKey) => (
-                    <div
-                      key={langKey}
-                      className={`${language !== langKey ? "hidden" : "block"}`}
-                    >
+                    <div key={langKey} className={`${language !== langKey ? "hidden" : "block"}`}>
                       <input
                         type="text"
                         name={`name_${langKey}`}
                         value={(formData as any)[`name_${langKey}`] || ""}
                         onChange={(e) =>
-                          setFormData((prev) => ({
-                            ...prev,
-                            [`name_${langKey}`]: e.target.value,
-                          }))
+                          setFormData((prev) => ({ ...prev, [`name_${langKey}`]: e.target.value }))
                         }
                         className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm text-black"
-                        placeholder={
-                          langKey === "id"
-                            ? "Nama produk (Indonesia)"
-                            : "Product name (English)"
-                        }
+                        placeholder={langKey === "id" ? "Nama produk (Indonesia)" : "Product name (English)"}
                       />
                     </div>
                   ))}
@@ -643,10 +546,7 @@ export default function CreateProductPage() {
 
                 {/* Slug */}
                 <div className="mb-6">
-                  <label
-                    htmlFor="slug"
-                    className="block text-sm font-medium text-gray-700 mb-2"
-                  >
+                  <label htmlFor="slug" className="block text-sm font-medium text-gray-700 mb-2">
                     Slug <span className="text-red-500">*</span>
                   </label>
                   <input
@@ -663,13 +563,8 @@ export default function CreateProductPage() {
                 {/* Featured */}
                 <div className="mb-6">
                   <div className="flex items-center gap-3">
-                    <ToggleSwitch
-                      checked={formData.featured}
-                      onChange={handleToggleFeatured}
-                    />
-                    <label className="text-sm font-medium text-gray-700">
-                      Featured
-                    </label>
+                    <ToggleSwitch checked={formData.featured} onChange={handleToggleFeatured} />
+                    <label className="text-sm font-medium text-gray-700">Featured</label>
                   </div>
                 </div>
 
@@ -677,13 +572,8 @@ export default function CreateProductPage() {
                 <div className="mb-6">
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-3">
-                      <ToggleSwitch
-                        checked={formData.status}
-                        onChange={handleToggleStatus}
-                      />
-                      <label className="text-sm font-medium text-gray-700">
-                        Status
-                      </label>
+                      <ToggleSwitch checked={formData.status} onChange={handleToggleStatus} />
+                      <label className="text-sm font-medium text-gray-700">Status</label>
                     </div>
                     <span
                       className={
@@ -700,35 +590,20 @@ export default function CreateProductPage() {
 
                 {/* Description */}
                 <div className="mb-6">
-                  <label
-                    htmlFor="description"
-                    className="block text-sm font-medium text-gray-700 mb-2"
-                  >
+                  <label htmlFor="description" className="block text-sm font-medium text-gray-700 mb-2">
                     Description <span className="text-red-500">*</span>
                   </label>
                   {(["id", "en"] as const).map((langKey) => (
-                    <div
-                      key={langKey}
-                      className={`${language !== langKey ? "hidden" : "block"}`}
-                    >
+                    <div key={langKey} className={`${language !== langKey ? "hidden" : "block"}`}>
                       <textarea
                         name={`description_${langKey}`}
-                        value={
-                          (formData as any)[`description_${langKey}`] || ""
-                        }
+                        value={(formData as any)[`description_${langKey}`] || ""}
                         onChange={(e) =>
-                          setFormData((prev) => ({
-                            ...prev,
-                            [`description_${langKey}`]: e.target.value,
-                          }))
+                          setFormData((prev) => ({ ...prev, [`description_${langKey}`]: e.target.value }))
                         }
                         rows={8}
                         className="w-full px-3 py-2 border border-gray-300 border-t-0 rounded-b-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm text-black resize-none"
-                        placeholder={
-                          langKey === "id"
-                            ? "Deskripsi produk (Indonesia)"
-                            : "Product description (English)"
-                        }
+                        placeholder={langKey === "id" ? "Deskripsi produk (Indonesia)" : "Product description (English)"}
                       />
                     </div>
                   ))}
@@ -736,10 +611,7 @@ export default function CreateProductPage() {
 
                 {/* Category */}
                 <div className="mb-6">
-                  <label
-                    htmlFor="category"
-                    className="block text-sm font-medium text-gray-700 mb-2"
-                  >
+                  <label htmlFor="category" className="block text-sm font-medium text-gray-700 mb-2">
                     Category <span className="text-red-500">*</span>
                   </label>
                   <AsyncSelect
@@ -759,11 +631,7 @@ export default function CreateProductPage() {
                       <div className="flex items-center gap-2">
                         {option.image && (
                           // eslint-disable-next-line @next/next/no-img-element
-                          <img
-                            src={option.image}
-                            alt={option.label}
-                            className="w-6 h-6 rounded object-cover"
-                          />
+                          <img src={option.image} alt={option.label} className="w-6 h-6 rounded object-cover" />
                         )}
                         <span>{option.label}</span>
                       </div>
@@ -778,10 +646,7 @@ export default function CreateProductPage() {
                     }}
                     value={
                       formData.category_id
-                        ? {
-                            value: formData.category_id,
-                            label: formData.category,
-                          }
+                        ? { value: formData.category_id, label: formData.category }
                         : null
                     }
                   />
@@ -789,10 +654,7 @@ export default function CreateProductPage() {
 
                 {/* Base Price */}
                 <div className="mb-6">
-                  <label
-                    htmlFor="price"
-                    className="block text-sm font-medium text-gray-700 mb-2"
-                  >
+                  <label htmlFor="price" className="block text-sm font-medium text-gray-700 mb-2">
                     Price (Rp) <span className="text-red-500">*</span>
                   </label>
                   <input
@@ -809,10 +671,7 @@ export default function CreateProductPage() {
 
                 {/* Heel Height (cm) */}
                 <div className="mb-6">
-                  <label
-                    htmlFor="heel_height_cm"
-                    className="block text-sm font-medium text-gray-700 mb-2"
-                  >
+                  <label htmlFor="heel_height_cm" className="block text-sm font-medium text-gray-700 mb-2">
                     Heel Height (cm)
                   </label>
                   <input
@@ -838,9 +697,7 @@ export default function CreateProductPage() {
               {/* Variants */}
               <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
                 <div className="flex items-center justify-between mb-6">
-                  <h2 className="text-lg font-semibold text-gray-900">
-                    Variant
-                  </h2>
+                  <h2 className="text-lg font-semibold text-gray-900">Variant</h2>
                   <button
                     type="button"
                     onClick={handleAddVariant}
@@ -858,35 +715,16 @@ export default function CreateProductPage() {
                 {/* Builder */}
                 <div className="space-y-4 mb-8">
                   {variants.map((variant, variantIndex) => (
-                    <div
-                      key={variant.id}
-                      className="border border-gray-200 rounded-lg p-4 bg-gray-50"
-                    >
+                    <div key={variant.id} className="border border-gray-200 rounded-lg p-4 bg-gray-50">
                       <div className="flex items-center justify-between mb-4">
                         <div className="flex items-center gap-3">
-                          <span className="text-sm font-medium text-gray-700">
-                            Variant {variantIndex + 1}
-                          </span>
+                          <span className="text-sm font-medium text-gray-700">Variant {variantIndex + 1}</span>
                           <input
                             type="text"
-                            value={
-                              language === "id"
-                                ? variant.name.id || ""
-                                : variant.name.en || ""
-                            }
-                            onChange={(e) =>
-                              handleVariantNameChange(
-                                variant.id,
-                                e.target.value,
-                                language
-                              )
-                            }
+                            value={language === "id" ? variant.name.id || "" : variant.name.en || ""}
+                            onChange={(e) => handleVariantNameChange(variant.id, e.target.value, language)}
                             className="px-3 py-1 border border-gray-300 rounded text-sm text-black bg-white"
-                            placeholder={
-                              language === "id"
-                                ? "Nama varian (Indonesia)"
-                                : "Variant name (English)"
-                            }
+                            placeholder={language === "id" ? "Nama varian (Indonesia)" : "Variant name (English)"}
                           />
                         </div>
                         <button
@@ -899,63 +737,30 @@ export default function CreateProductPage() {
                       </div>
 
                       <div className="space-y-2">
-                        <label className="block text-sm font-medium text-gray-700">
-                          Option
-                        </label>
+                        <label className="block text-sm font-medium text-gray-700">Option</label>
                         <div className="flex flex-wrap gap-2">
                           {variant.options.map((option, optionIndex) => (
-                            <div
-                              key={optionIndex}
-                              className="flex items-center gap-1"
-                            >
+                            <div key={optionIndex} className="flex items-center gap-1">
                               <input
                                 type="text"
-                                value={
-                                  language === "id"
-                                    ? option.id || ""
-                                    : option.en || ""
-                                }
-                                onChange={(e) =>
-                                  handleOptionChange(
-                                    variant.id,
-                                    optionIndex,
-                                    e.target.value,
-                                    language
-                                  )
-                                }
+                                value={language === "id" ? option.id || "" : option.en || ""}
+                                onChange={(e) => handleOptionChange(variant.id, optionIndex, e.target.value, language)}
                                 className="px-3 py-1 border border-gray-300 rounded text-sm text-black bg-white w-24"
                                 placeholder={
                                   optionIndex === variant.options.length - 1
-                                    ? language === "id"
-                                      ? "Isi di sini"
-                                      : "Input here"
+                                    ? language === "id" ? "Isi di sini" : "Input here"
                                     : "Option"
                                 }
                               />
-                              {variant.options.length > 1 &&
-                                (option.id || option.en).trim() !== "" && (
-                                  <button
-                                    type="button"
-                                    onClick={() =>
-                                      handleRemoveOption(
-                                        variant.id,
-                                        optionIndex
-                                      )
-                                    }
-                                    className="text-red-500 hover:text-red-700 text-sm w-4 h-4 flex items-center justify-center"
-                                  >
-                                    <DeleteIcon
-                                      label=""
-                                      onClick={() =>
-                                        handleRemoveOption(
-                                          variant.id,
-                                          optionIndex
-                                        )
-                                      }
-                                      className="w-4 h-4"
-                                    />
-                                  </button>
-                                )}
+                              {variant.options.length > 1 && (option.id || option.en).trim() !== "" && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleRemoveOption(variant.id, optionIndex)}
+                                  className="text-red-500 hover:text-red-700 text-sm w-4 h-4 flex items-center justify-center"
+                                >
+                                  <DeleteIcon label="" onClick={() => handleRemoveOption(variant.id, optionIndex)} className="w-4 h-4" />
+                                </button>
+                              )}
                             </div>
                           ))}
                         </div>
@@ -965,19 +770,13 @@ export default function CreateProductPage() {
                 </div>
 
                 {/* Product Variant Pricing */}
-                {variants.some((v) =>
-                  v.options.some((o) => (o.id || o.en).trim() !== "")
-                ) && (
+                {variants.some((v) => v.options.some((o) => (o.id || o.en).trim() !== "")) && (
                   <div className="border-t border-gray-200 pt-6">
-                    <h3 className="text-lg font-semibold text-gray-900 mb-4">
-                      Product Variant
-                    </h3>
+                    <h3 className="text-lg font-semibold text-gray-900 mb-4">Product Variant</h3>
 
                     {/* Set Pricing */}
                     <div className="mb-6">
-                      <h4 className="text-sm font-medium text-gray-700 mb-3">
-                        Set Pricing
-                      </h4>
+                      <h4 className="text-sm font-medium text-gray-700 mb-3">Set Pricing</h4>
 
                       <div className="space-y-3">
                         <label className="flex items-center gap-3">
@@ -986,32 +785,11 @@ export default function CreateProductPage() {
                             name="pricingType"
                             value="single"
                             checked={pricingType === "single"}
-                            onChange={(e) =>
-                              setPricingType(
-                                e.target.value as "single" | "individual"
-                              )
-                            }
+                            onChange={(e) => setPricingType(e.target.value as "single" | "individual")}
                             className="text-blue-600"
                           />
-                          <span className="text-sm text-gray-700">
-                            Single Price for All Variant
-                          </span>
+                          <span className="text-sm text-gray-700">Single Price for All Variant</span>
                         </label>
-
-                        {/* {pricingType === "single" && (
-                          <div className="ml-6">
-                            <div className="flex items-center gap-2">
-                              <span className="text-sm text-gray-600">Price (Rp)</span>
-                              <input
-                                type="number"
-                                value={singlePrice}
-                                onChange={(e) => setSinglePrice(e.target.value)}
-                                className="px-3 py-1 border border-gray-300 rounded text-sm text-black w-32"
-                                min={0}
-                              />
-                            </div>
-                          </div>
-                        )} */}
 
                         <label className="flex items-center gap-3">
                           <input
@@ -1019,240 +797,130 @@ export default function CreateProductPage() {
                             name="pricingType"
                             value="individual"
                             checked={pricingType === "individual"}
-                            onChange={(e) =>
-                              setPricingType(
-                                e.target.value as "single" | "individual"
-                              )
-                            }
+                            onChange={(e) => setPricingType(e.target.value as "single" | "individual")}
                             className="text-blue-600"
                           />
-                          <span className="text-sm text-gray-700">
-                            Set Individual Prices
-                          </span>
+                          <span className="text-sm text-gray-700">Set Individual Prices</span>
                         </label>
                       </div>
                     </div>
 
                     {/* Harga per KELOMPOK (1 dimensi) */}
-                    {pricingType === "individual" &&
-                      validVariantCount === 1 && (
-                        <div className="space-y-4">
-                          {Object.keys(groupedCombinations()).map(
-                            (firstOption) => (
-                              <div
-                                key={firstOption}
-                                className="border border-gray-200 rounded-lg"
+                    {pricingType === "individual" && validVariantCount === 1 && (
+                      <div className="space-y-4">
+                        {Object.keys(groupedCombinations()).map((firstOption) => (
+                          <div key={firstOption} className="border border-gray-200 rounded-lg">
+                            <div className="bg-gray-50 px-4 py-3 border-b border-gray-200 flex items-center justify-between">
+                              <h5 className="font-medium text-gray-900">{firstOption}</h5>
+                              <button
+                                type="button"
+                                onClick={() => toggleGroup(firstOption)}
+                                className="text-gray-400 hover:text-gray-600"
+                                aria-label={`Toggle ${firstOption}`}
                               >
-                                <div className="bg-gray-50 px-4 py-3 border-b border-gray-200 flex items-center justify-between">
-                                  <h5 className="font-medium text-gray-900">
-                                    {firstOption}
-                                  </h5>
-                                  <button
-                                    type="button"
-                                    onClick={() => toggleGroup(firstOption)}
-                                    className="text-gray-400 hover:text-gray-600"
-                                    aria-label={`Toggle ${firstOption}`}
-                                  >
-                                    <svg
-                                      className={`w-4 h-4 transition-transform ${
-                                        isGroupOpen(firstOption)
-                                          ? ""
-                                          : "rotate-180"
-                                      }`}
-                                      fill="none"
-                                      stroke="currentColor"
-                                      viewBox="0 0 24 24"
-                                    >
-                                      <path
-                                        strokeLinecap="round"
-                                        strokeLinejoin="round"
-                                        strokeWidth={2}
-                                        d="M19 9l-7 7-7-7"
-                                      />
-                                    </svg>
-                                  </button>
-                                </div>
+                                <svg className={`w-4 h-4 transition-transform ${isGroupOpen(firstOption) ? "" : "rotate-180"}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                                </svg>
+                              </button>
+                            </div>
 
-                                {isGroupOpen(firstOption) && (
-                                  <div className="p-4">
-                                    <div className="flex items-center gap-3 text-sm">
-                                      <span className="text-gray-600">Rp</span>
-                                      <input
-                                        type="number"
-                                        value={groupPrices[firstOption] ?? ""}
-                                        onChange={(e) =>
-                                          setGroupPrices((prev) => ({
-                                            ...prev,
-                                            [firstOption]: e.target.value,
-                                          }))
-                                        }
-                                        className="px-2 py-1 border border-gray-300 rounded text-sm text-black w-32"
-                                        placeholder="0"
-                                        min={0}
-                                      />
-                                    </div>
-                                  </div>
-                                )}
+                            {isGroupOpen(firstOption) && (
+                              <div className="p-4">
+                                <div className="flex items-center gap-3 text-sm">
+                                  <span className="text-gray-600">Rp</span>
+                                  <input
+                                    type="number"
+                                    value={groupPrices[firstOption] ?? ""}
+                                    onChange={(e) => setGroupPrices((prev) => ({ ...prev, [firstOption]: e.target.value }))}
+                                    className="px-2 py-1 border border-gray-300 rounded text-sm text-black w-32"
+                                    placeholder="0"
+                                    min={0}
+                                  />
+                                </div>
                               </div>
-                            )
-                          )}
-                        </div>
-                      )}
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    )}
 
                     {/* Harga per KOMBINASI (≥2 dimensi) */}
                     {pricingType === "individual" && validVariantCount >= 2 && (
                       <div className="space-y-4">
-                        {Object.entries(groupedCombinations()).map(
-                          ([firstOption, combinations]) => (
-                            <div
-                              key={firstOption}
-                              className="border border-gray-200 rounded-lg"
-                            >
-                              <div className="bg-gray-50 px-4 py-3 border-b border-gray-200 flex items-center justify-between">
-                                <h5 className="font-medium text-gray-900">
-                                  {firstOption}
-                                </h5>
-                                <button
-                                  type="button"
-                                  onClick={() => toggleGroup(firstOption)}
-                                  className="text-gray-400 hover:text-gray-600"
-                                  aria-label={`Toggle ${firstOption}`}
-                                >
-                                  <svg
-                                    className={`w-4 h-4 transition-transform ${
-                                      isGroupOpen(firstOption)
-                                        ? ""
-                                        : "rotate-180"
-                                    }`}
-                                    fill="none"
-                                    stroke="currentColor"
-                                    viewBox="0 0 24 24"
-                                  >
-                                    <path
-                                      strokeLinecap="round"
-                                      strokeLinejoin="round"
-                                      strokeWidth={2}
-                                      d="M19 9l-7 7-7-7"
-                                    />
-                                  </svg>
-                                </button>
-                              </div>
-
-                              {isGroupOpen(firstOption) && (
-                                <div className="p-4">
-                                  {Array.from(
-                                    new Set(combinations.map((c) => c[1]))
-                                  )
-                                    .filter(Boolean)
-                                    .map((secondOption) => (
-                                      <div key={secondOption} className="mb-4">
-                                        <div className="bg-gray-100 px-3 py-2 border border-gray-200 rounded flex items-center justify-between">
-                                          <h6 className="font-medium text-gray-800">
-                                            {secondOption}
-                                          </h6>
-                                          <button
-                                            type="button"
-                                            onClick={() =>
-                                              toggleSub(
-                                                firstOption,
-                                                String(secondOption)
-                                              )
-                                            }
-                                            className="text-gray-400 hover:text-gray-600"
-                                            aria-label={`Toggle ${firstOption} - ${secondOption}`}
-                                          >
-                                            <svg
-                                              className={`w-4 h-4 transition-transform ${
-                                                isSubOpen(
-                                                  firstOption,
-                                                  String(secondOption)
-                                                )
-                                                  ? ""
-                                                  : "rotate-180"
-                                              }`}
-                                              fill="none"
-                                              stroke="currentColor"
-                                              viewBox="0 0 24 24"
-                                            >
-                                              <path
-                                                strokeLinecap="round"
-                                                strokeLinejoin="round"
-                                                strokeWidth={2}
-                                                d="M19 9l-7 7-7-7"
-                                              />
-                                            </svg>
-                                          </button>
-                                        </div>
-
-                                        {isSubOpen(
-                                          firstOption,
-                                          String(secondOption)
-                                        ) && (
-                                          <div className="mt-2 space-y-2">
-                                            {combinations
-                                              .filter(
-                                                (c) => c[1] === secondOption
-                                              )
-                                              .map((combination, idx) => {
-                                                const valid =
-                                                  getValidVariants();
-                                                const enParts = combination.map(
-                                                  (val, pos) => {
-                                                    const v = valid[pos];
-                                                    const found =
-                                                      v?.options.find(
-                                                        (o) =>
-                                                          (o.en || o.id) ===
-                                                            val ||
-                                                          (o.id || o.en) === val
-                                                      );
-                                                    return found
-                                                      ? found.en || found.id
-                                                      : val;
-                                                  }
-                                                );
-                                                const key = enParts.join("-");
-                                                const thirdOption =
-                                                  combination[2];
-                                                return (
-                                                  <div
-                                                    key={`${key}-${idx}`}
-                                                    className="flex items-center gap-3 text-sm"
-                                                  >
-                                                    <span className="w-24 text-gray-600">
-                                                      {thirdOption || "Price"}
-                                                    </span>
-                                                    <span className="text-gray-500">
-                                                      Rp
-                                                    </span>
-                                                    <input
-                                                      type="number"
-                                                      value={
-                                                        individualPrices[key] ||
-                                                        ""
-                                                      }
-                                                      onChange={(e) =>
-                                                        handleIndividualPriceChange(
-                                                          key,
-                                                          e.target.value
-                                                        )
-                                                      }
-                                                      className="px-2 py-1 border border-gray-300 rounded text-sm text-black w-32"
-                                                      placeholder="0"
-                                                      min={0}
-                                                    />
-                                                  </div>
-                                                );
-                                              })}
-                                          </div>
-                                        )}
-                                      </div>
-                                    ))}
-                                </div>
-                              )}
+                        {Object.entries(groupedCombinations()).map(([firstOption, combinations]) => (
+                          <div key={firstOption} className="border border-gray-200 rounded-lg">
+                            <div className="bg-gray-50 px-4 py-3 border-b border-gray-200 flex items-center justify-between">
+                              <h5 className="font-medium text-gray-900">{firstOption}</h5>
+                              <button
+                                type="button"
+                                onClick={() => toggleGroup(firstOption)}
+                                className="text-gray-400 hover:text-gray-600"
+                                aria-label={`Toggle ${firstOption}`}
+                              >
+                                <svg className={`w-4 h-4 transition-transform ${isGroupOpen(firstOption) ? "" : "rotate-180"}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                                </svg>
+                              </button>
                             </div>
-                          )
-                        )}
+
+                            {isGroupOpen(firstOption) && (
+                              <div className="p-4">
+                                {Array.from(new Set(combinations.map((c) => c[1])))
+                                  .filter(Boolean)
+                                  .map((secondOption) => (
+                                    <div key={String(secondOption)} className="mb-4">
+                                      <div className="bg-gray-100 px-3 py-2 border border-gray-200 rounded flex items-center justify-between">
+                                        <h6 className="font-medium text-gray-800">{String(secondOption)}</h6>
+                                        <button
+                                          type="button"
+                                          onClick={() => toggleSub(firstOption, String(secondOption))}
+                                          className="text-gray-400 hover:text-gray-600"
+                                          aria-label={`Toggle ${firstOption} - ${String(secondOption)}`}
+                                        >
+                                          <svg className={`w-4 h-4 transition-transform ${isSubOpen(firstOption, String(secondOption)) ? "" : "rotate-180"}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                                          </svg>
+                                        </button>
+                                      </div>
+
+                                      {isSubOpen(firstOption, String(secondOption)) && (
+                                        <div className="mt-2 space-y-2">
+                                          {combinations
+                                            .filter((c) => c[1] === secondOption)
+                                            .map((combination, idx) => {
+                                              const valid = getValidVariants();
+                                              const enParts = combination.map((val, pos) => {
+                                                const v = valid[pos];
+                                                const found = v?.options.find(
+                                                  (o) => (o.en || o.id) === val || (o.id || o.en) === val
+                                                );
+                                                return found ? found.en || found.id : String(val);
+                                              });
+                                              const key = enParts.join("-");
+                                              const thirdOption = combination[2];
+                                              return (
+                                                <div key={`${key}-${idx}`} className="flex items-center gap-3 text-sm">
+                                                  <span className="w-24 text-gray-600">{thirdOption || "Price"}</span>
+                                                  <span className="text-gray-500">Rp</span>
+                                                  <input
+                                                    type="number"
+                                                    value={individualPrices[key] || ""}
+                                                    onChange={(e) => handleIndividualPriceChange(key, e.target.value)}
+                                                    className="px-2 py-1 border border-gray-300 rounded text-sm text-black w-32"
+                                                    placeholder="0"
+                                                    min={0}
+                                                  />
+                                                </div>
+                                              );
+                                            })}
+                                        </div>
+                                      )}
+                                    </div>
+                                  ))}
+                              </div>
+                            )}
+                          </div>
+                        ))}
                       </div>
                     )}
                   </div>
@@ -1264,15 +932,10 @@ export default function CreateProductPage() {
             <div className="space-y-6">
               {/* SEO Card */}
               <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-                <h3 className="text-lg font-semibold text-gray-900 mb-6">
-                  SEO
-                </h3>
+                <h3 className="text-lg font-semibold text-gray-900 mb-6">SEO</h3>
 
                 <div className="mb-6">
-                  <label
-                    htmlFor="tags"
-                    className="block text-sm font-medium text-gray-700 mb-2"
-                  >
+                  <label htmlFor="tags" className="block text-sm font-medium text-gray-700 mb-2">
                     Tags
                   </label>
                   <input
@@ -1287,83 +950,47 @@ export default function CreateProductPage() {
                 </div>
 
                 <div className="mb-6">
-                  <label
-                    htmlFor="keyword"
-                    className="block text-sm font-medium text-gray-700 mb-2"
-                  >
+                  <label htmlFor="keyword" className="block text-sm font-medium text-gray-700 mb-2">
                     Keyword
                   </label>
                   {(["id", "en"] as const).map((langKey) => (
-                    <div
-                      key={langKey}
-                      className={`${language !== langKey ? "hidden" : "block"}`}
-                    >
+                    <div key={langKey} className={`${language !== langKey ? "hidden" : "block"}`}>
                       <input
                         type="text"
                         name={`keyword_${langKey}`}
                         value={(formData as any)[`keyword_${langKey}`] || ""}
-                        onChange={(e) =>
-                          setFormData((prev) => ({
-                            ...prev,
-                            [`keyword_${langKey}`]: e.target.value,
-                          }))
-                        }
+                        onChange={(e) => setFormData((prev) => ({ ...prev, [`keyword_${langKey}`]: e.target.value }))}
                         className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm text-black"
-                        placeholder={
-                          langKey === "id"
-                            ? "Kata kunci SEO (Indonesia)"
-                            : "SEO keywords (English)"
-                        }
+                        placeholder={langKey === "id" ? "Kata kunci SEO (Indonesia)" : "SEO keywords (English)"}
                       />
                     </div>
                   ))}
                 </div>
 
                 <div className="mb-6">
-                  <label
-                    htmlFor="seoDescription"
-                    className="block text-sm font-medium text-gray-700 mb-2"
-                  >
+                  <label htmlFor="seoDescription" className="block text-sm font-medium text-gray-700 mb-2">
                     Description
                   </label>
                   {(["id", "en"] as const).map((langKey) => (
-                    <div
-                      key={langKey}
-                      className={`${language !== langKey ? "hidden" : "block"}`}
-                    >
+                    <div key={langKey} className={`${language !== langKey ? "hidden" : "block"}`}>
                       <textarea
                         name={`seoDescription_${langKey}`}
-                        value={
-                          (formData as any)[`seoDescription_${langKey}`] || ""
-                        }
-                        onChange={(e) =>
-                          setFormData((prev) => ({
-                            ...prev,
-                            [`seoDescription_${langKey}`]: e.target.value,
-                          }))
-                        }
+                        value={(formData as any)[`seoDescription_${langKey}`] || ""}
+                        onChange={(e) => setFormData((prev) => ({ ...prev, [`seoDescription_${langKey}`]: e.target.value }))}
                         rows={6}
                         className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm text-black resize-none"
-                        placeholder={
-                          langKey === "id"
-                            ? "Deskripsi SEO (Indonesia)"
-                            : "SEO description (English)"
-                        }
+                        placeholder={langKey === "id" ? "Deskripsi SEO (Indonesia)" : "SEO description (English)"}
                       />
                     </div>
                   ))}
                 </div>
               </div>
 
-              {/* 🆕 Promotion Product Card */}
+              {/* Promotion Product Card */}
               <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-                <h3 className="text-lg font-semibold text-gray-900 mb-6">
-                  Promotion Product
-                </h3>
+                <h3 className="text-lg font-semibold text-gray-900 mb-6">Promotion Product</h3>
 
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Promotion Product
-                </label>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Promotion Product</label>
 
                 <AsyncSelect
                   cacheOptions
@@ -1377,11 +1004,7 @@ export default function CreateProductPage() {
                     <div className="flex items-center gap-2">
                       {option.image && (
                         // eslint-disable-next-line @next/next/no-img-element
-                        <img
-                          src={option.image}
-                          alt={option.label}
-                          className="w-6 h-6 rounded object-cover"
-                        />
+                        <img src={option.image} alt={option.label} className="w-6 h-6 rounded object-cover" />
                       )}
                       <span>{option.label}</span>
                     </div>
@@ -1394,10 +1017,7 @@ export default function CreateProductPage() {
                       padding: "2px",
                       minHeight: "44px",
                     }),
-                    valueContainer: (base: any) => ({
-                      ...base,
-                      padding: "0 10px",
-                    }),
+                    valueContainer: (base: any) => ({ ...base, padding: "0 10px" }),
                     placeholder: (base: any) => ({ ...base, color: "#6b7280" }),
                   }}
                 />

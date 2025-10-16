@@ -1,62 +1,49 @@
-export const runtime = "nodejs";
-
+// app/api/products/[id]/route.ts
 import { NextRequest, NextResponse } from "next/server";
-import { ensureEnvOrThrow, makeApiUrl, readCookie } from "../../_utils/backend";
 
-// GET detail produk → /api/products/:id → proxy ke Laravel /api/v1/products/:id
-export async function GET(_req: NextRequest, ctx: { params: { id: string } }) {
-  try {
-    ensureEnvOrThrow();
-    const upstream = await fetch(makeApiUrl(`products/${ctx.params.id}`), {
-      method: "GET",
-      headers: { Accept: "application/json" },
-      cache: "no-store",
-    });
-    const text = await upstream.text();
-    const data = text ? JSON.parse(text) : {};
-    return NextResponse.json(data, { status: upstream.status || 200 });
-  } catch (e: any) {
-    return NextResponse.json({ status: "error", message: e?.message || "Failed to fetch product" }, { status: 500 });
+async function forward(req: NextRequest, targetUrl: string) {
+  const hdrs = new Headers(req.headers);
+  hdrs.set("Accept", "application/json");
+  hdrs.set("X-Requested-With", "XMLHttpRequest");
+  hdrs.delete("host");
+  hdrs.delete("content-length");
+
+  const init: RequestInit = {
+    method: req.method,
+    headers: hdrs,
+  };
+  if (!["GET", "HEAD"].includes(req.method)) {
+    const buf = await req.arrayBuffer();
+    init.body = buf;
   }
+  const upstream = await fetch(targetUrl, init);
+  const text = await upstream.text();
+  let json: any = {};
+  try {
+    json = text ? JSON.parse(text) : {};
+  } catch {
+    json = { status: "error", message: "Invalid JSON from upstream" };
+  }
+  return NextResponse.json(json, { status: upstream.status });
 }
 
-// PATCH edit produk (mendukung multipart) → /api/products/:id
-export async function PATCH(req: NextRequest, ctx: { params: { id: string } }) {
-  try {
-    ensureEnvOrThrow();
+export async function GET(req: NextRequest, ctx: { params: { id: string } }) {
+  const base = (process.env.NEXT_PUBLIC_API_URL || "").replace(/\/+$/, "");
+  const target = `${base}/products/${ctx.params.id}`;
+  return forward(req, target);
+}
 
-    const cookie = req.headers.get("cookie");
-    const bearer = readCookie(cookie, "access_token");
-    const contentType = req.headers.get("content-type") || "";
+export async function PUT(req: NextRequest, ctx: { params: { id: string } }) {
+  const base = (process.env.NEXT_PUBLIC_API_URL || "").replace(/\/+$/, "");
+  const target = `${base}/products/${ctx.params.id}`;
+  return forward(req, target);
+}
 
-    // headers ke upstream — jangan set Content-Type manual untuk multipart
-    const headers: Record<string, string> = {
-      Accept: "application/json",
-      ...(bearer ? { Authorization: `Bearer ${bearer}` } : {}),
-      ...(contentType.toLowerCase().startsWith("multipart/form-data") ? {} : { "Content-Type": "application/json" }),
-    };
+// jika backend kamu pakai PATCH:
+export const PATCH = PUT;
 
-    // body: kalau multipart → forward stream mentah; kalau JSON → stringify hasil req.json()
-    let body: BodyInit | null = null;
-    if (contentType.toLowerCase().startsWith("multipart/form-data")) {
-      body = req.body as any; // ReadableStream
-    } else if (contentType.toLowerCase().includes("application/json")) {
-      const json = await req.json().catch(() => ({}));
-      body = JSON.stringify(json);
-    } else {
-      body = (req as any).body ?? null;
-    }
-
-    const upstream = await fetch(makeApiUrl(`products/${ctx.params.id}`), {
-      method: "PATCH",
-      headers,
-      body,
-    });
-
-    const text = await upstream.text();
-    const data = text ? JSON.parse(text) : {};
-    return NextResponse.json(data, { status: upstream.status || 200 });
-  } catch (e: any) {
-    return NextResponse.json({ status: "error", message: e?.message || "Failed to update product" }, { status: 500 });
-  }
+export async function DELETE(req: NextRequest, ctx: { params: { id: string } }) {
+  const base = (process.env.NEXT_PUBLIC_API_URL || "").replace(/\/+$/, "");
+  const target = `${base}/products/${ctx.params.id}`;
+  return forward(req, target);
 }

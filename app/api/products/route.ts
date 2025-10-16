@@ -1,60 +1,59 @@
-export const runtime = "nodejs";
-
+// app/api/products/route.ts
 import { NextRequest, NextResponse } from "next/server";
-import { ensureEnvOrThrow, makeApiUrl, readCookie } from "../_utils/backend";
 
-/** GET /api/products → proxy ke Laravel GET /api/v1/products */
-export async function GET(req: NextRequest) {
-  try {
-    ensureEnvOrThrow();
+/** Forward helper */
+async function forward(req: NextRequest, targetUrl: string) {
+  const hdrs = new Headers(req.headers);
+  hdrs.set("Accept", "application/json");
+  hdrs.set("X-Requested-With", "XMLHttpRequest");
+  // Hindari header Host/Content-Length yang mengganggu
+  hdrs.delete("host");
+  hdrs.delete("content-length");
 
-    const url = new URL(makeApiUrl("products"));
-    // Teruskan query search/page/per_page/status, dsb.
-    for (const [k, v] of Array.from(req.nextUrl.searchParams.entries())) url.searchParams.set(k, v);
+  const init: RequestInit = {
+    method: req.method,
+    headers: hdrs,
+    body: ["POST", "PUT", "PATCH", "DELETE"].includes(req.method)
+      ? await req.text()
+      : undefined,
+    cache: "no-store",
+  };
 
-    // Ambil bearer dari cookie (opsional, jika pakai Sanctum/token)
-    const cookie = req.headers.get("cookie");
-    const bearer = readCookie(cookie, "access_token");
+  const resp = await fetch(targetUrl, init);
+  const text = await resp.text();
 
-    const res = await fetch(url.toString(), {
-      method: "GET",
-      headers: {
-        Accept: "application/json",
-        ...(bearer ? { Authorization: `Bearer ${bearer}` } : {})
-      },
-      cache: "no-store",
-    });
+  // Selalu no-store untuk proxy
+  const headers = new Headers({
+    "content-type": "application/json",
+    "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+    Pragma: "no-cache",
+    Expires: "0",
+  });
 
-    const json = await res.json().catch(() => ({}));
-    return NextResponse.json(json, { status: res.status || 200 });
-  } catch (e: any) {
-    return NextResponse.json({ status: "error", message: e?.message || "Failed to fetch products" }, { status: 500 });
-  }
+  return new NextResponse(text, { status: resp.status, headers });
 }
 
-/** POST /api/products → proxy ke Laravel POST /api/v1/products */
-export async function POST(req: NextRequest) {
-  try {
-    ensureEnvOrThrow();
+export async function GET(req: NextRequest) {
+  const base = (process.env.NEXT_PUBLIC_API_URL || "").replace(/\/+$/, "");
+  const url = new URL(req.url);
+  const qs = new URLSearchParams(url.search);
 
-    const body = await req.json().catch(() => ({}));
-    const url = makeApiUrl("products");
-    const cookie = req.headers.get("cookie");
-    const bearer = readCookie(cookie, "access_token");
-
-    const res = await fetch(url, {
-      method: "POST",
-      headers: {
-        Accept: "application/json",
-        "Content-Type": "application/json",
-        ...(bearer ? { Authorization: `Bearer ${bearer}` } : {})
-      },
-      body: JSON.stringify(body),
-    });
-
-    const json = await res.json().catch(() => ({}));
-    return NextResponse.json(json, { status: res.status || 200 });
-  } catch (e: any) {
-    return NextResponse.json({ status: "error", message: e?.message || "Failed to create product" }, { status: 500 });
+  // Normalisasi parameter: perPage -> per_page (sesuai Laravel)
+  if (qs.has("perPage") && !qs.has("per_page")) {
+    qs.set("per_page", qs.get("perPage") || "");
+    qs.delete("perPage");
   }
+
+  // Default aman
+  if (!qs.has("page")) qs.set("page", "1");
+  if (!qs.has("per_page")) qs.set("per_page", "12");
+
+  const target = `${base}/products?${qs.toString()}`;
+  return forward(req, target);
+}
+
+export async function POST(req: NextRequest) {
+  const base = (process.env.NEXT_PUBLIC_API_URL || "").replace(/\/+$/, "");
+  const target = `${base}/products`;
+  return forward(req, target);
 }
