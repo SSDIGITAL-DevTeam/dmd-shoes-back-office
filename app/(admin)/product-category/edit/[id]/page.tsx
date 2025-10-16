@@ -1,8 +1,8 @@
+// app/(admin)/product-category/edit/[id]/page.tsx
 "use client";
 
 import React, { useEffect, useState } from "react";
 import { DraftButton, CancelButton, DeleteButton } from "@/components/ui/ActionButton";
-import api from "@/lib/fetching";
 import { useParams, useRouter } from "next/navigation";
 
 type ApiCategory = {
@@ -16,15 +16,57 @@ type ApiCategory = {
   cover_url?: string | null;
 };
 
+type FormState = {
+  name_id: string;
+  name_en: string;
+  slug: string;
+  parent_id: string;
+  status: boolean;
+  cover_url: string;
+};
+
+// ===== helpers fetch (tanpa ubah lib) =====
+function getTokenFromStorage() {
+  if (typeof window === "undefined") return null;
+  return (
+    localStorage.getItem("access_token") ||
+    localStorage.getItem("token") ||
+    sessionStorage.getItem("access_token")
+  );
+}
+
+async function fetchJSON(input: string, init?: RequestInit) {
+  const headers = new Headers(init?.headers || {});
+  headers.set("Accept", "application/json");
+  headers.set("X-Requested-With", "XMLHttpRequest");
+  const res = await fetch(input, { ...init, headers, credentials: "include" });
+  const text = await res.text().catch(() => "");
+  const data = text ? JSON.parse(text) : {};
+  return { ok: res.ok, status: res.status, data };
+}
+
+async function fetchWithAuth(input: string, init?: RequestInit) {
+  const headers = new Headers(init?.headers || {});
+  headers.set("Accept", "application/json");
+  headers.set("X-Requested-With", "XMLHttpRequest");
+
+  const token = getTokenFromStorage();
+  if (token && !headers.has("Authorization")) {
+    headers.set("Authorization", `Bearer ${token}`);
+  }
+
+  return fetch(input, { ...init, headers, credentials: "include" });
+}
+
 export default function EditCategoryPage() {
-  const router = useRouter();
   const params = useParams<{ id: string }>();
   const id = Number(params?.id);
+  const router = useRouter();
 
   const [parentCategories, setParentCategories] = useState<ApiCategory[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [formData, setFormData] = useState({
+  const [formData, setFormData] = useState<FormState>({
     name_id: "",
     name_en: "",
     slug: "",
@@ -34,91 +76,154 @@ export default function EditCategoryPage() {
   });
   const [coverFile, setCoverFile] = useState<File | null>(null);
 
+  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
+    const t = e.target as HTMLInputElement;
+    const { name, value, type, checked } = t;
+    setFormData((prev) => ({
+      ...prev,
+      [name]: type === "checkbox" ? checked : value,
+    }));
+  };
+
+  // ✅ Load data kategori & parent tanpa ubah layout
   useEffect(() => {
     let mounted = true;
     (async () => {
+      setLoading(true);
+      setError(null);
       try {
-        const [listRes, allRes] = await Promise.all([
-          api.get('/categories', { params: { per_page: 100 } }),
-          api.get('/categories', { params: { status: 'active', per_page: 100 } }),
+        // ambil semua kategori
+        const [listRes, parentsRes] = await Promise.all([
+          fetchJSON(`/api/category?perPage=100`),
+          fetchJSON(`/api/category?status=active&perPage=100`),
         ]);
-        const all = Array.isArray(listRes.data?.data) ? listRes.data.data as ApiCategory[] : [];
-        const parents = Array.isArray(allRes.data?.data) ? allRes.data.data as ApiCategory[] : [];
-        if (!mounted) return;
-        setParentCategories(parents);
 
-        const found = all.find((c) => c.id === id);
+        const list: ApiCategory[] =
+          Array.isArray(listRes.data?.data)
+            ? listRes.data.data
+            : Array.isArray(listRes.data)
+            ? listRes.data
+            : Array.isArray(listRes.data?.data?.data)
+            ? listRes.data.data.data
+            : [];
+
+        const parentsRaw: ApiCategory[] =
+          Array.isArray(parentsRes.data?.data)
+            ? parentsRes.data.data
+            : Array.isArray(parentsRes.data)
+            ? parentsRes.data
+            : Array.isArray(parentsRes.data?.data?.data)
+            ? parentsRes.data.data.data
+            : [];
+
+        // 🧩 filter parent hanya yang tidak memiliki parent_id & bukan dirinya sendiri
+        const topLevelParents = parentsRaw.filter((p) => !p.parent_id && p.id !== id);
+        if (!mounted) return;
+        setParentCategories(topLevelParents);
+
+        // cari kategori yang sedang diedit
+        const found = list.find((c) => c.id === id);
         if (found) {
+          const foundParent =
+            found.parent_id && found.parent_id !== found.id ? String(found.parent_id) : "";
+
           setFormData({
             name_id: found.name?.id || found.name_text || "",
             name_en: found.name?.en || "",
             slug: found.slug || "",
-            parent_id: found.parent_id ? String(found.parent_id) : "",
+            parent_id: foundParent,
             status: !!found.status,
             cover_url: found.cover_url || found.cover || "",
           });
         } else {
-          setError('Category not found');
+          setError("Category not found");
         }
       } catch (e: any) {
-        setError(e?.response?.data?.message || e?.message || 'Failed to load category');
+        setError(e?.message || "Failed to load");
       } finally {
         setLoading(false);
       }
     })();
-    return () => { mounted = false; };
+    return () => {
+      mounted = false;
+    };
   }, [id]);
 
-  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
-    const { name, value, type, checked } = e.target as HTMLInputElement;
-    setFormData(prev => ({ ...prev, [name]: type === 'checkbox' ? checked : value }));
-  };
-
+  // ✅ Simpan perubahan
   const handleSaveChanges = async () => {
-  setError(null);
-  try {
-    const fd = new FormData();
-    fd.append("name[id]", formData.name_id);
-    fd.append("name[en]", formData.name_en || "");
-    if (formData.slug) fd.append("slug", formData.slug);
-    if (formData.parent_id) fd.append("parent_id", String(Number(formData.parent_id)));
-    fd.append("status", formData.status ? "1" : "0");
-    if (coverFile) fd.append("cover", coverFile);
-    else if (formData.cover_url) fd.append("cover_url", formData.cover_url);
+    setError(null);
 
-    // Opsi A (paling aman): spoof PATCH via POST
-    fd.append("_method", "PATCH");
-    await api.post(`/categories/${id}`, fd); // <-- JANGAN kirim headers Content-Type
-    router.push("/product-category");
-    router.refresh();
+    // ❗ Jangan izinkan memilih diri sendiri
+    if (formData.parent_id && Number(formData.parent_id) === id) {
+      setFormData((prev) => ({ ...prev, parent_id: "" }));
+      setError("Parent category tidak boleh diri sendiri.");
+      return;
+    }
 
-    // Opsi B (kalau PATCH multipart diizinkan):
-    // await api.patch(`/categories/${id}`, fd); // juga tanpa headers Content-Type
-
-    router.replace("/product-category");
-  } catch (e: any) {
-    setError(e?.response?.data?.message || e?.message || "Failed to update category");
-  }
-};
-
-  const handleCancel = () => router.push('/product-category');
-
-  const handleDelete = async () => {
-    if (!confirm('Are you sure you want to delete this category?')) return;
     try {
-      await api.delete(`/categories/${id}`);
-      router.replace('/product-category');
+      const url = `/api/category/${id}`;
+      let res: Response;
+
+      if (coverFile) {
+        // multipart
+        const fd = new FormData();
+        fd.append("name[id]", formData.name_id);
+        fd.append("name[en]", formData.name_en);
+        if (formData.slug) fd.append("slug", formData.slug);
+        if (formData.parent_id) fd.append("parent_id", String(Number(formData.parent_id)));
+        fd.append("status", formData.status ? "1" : "0");
+        fd.append("cover", coverFile);
+
+        res = await fetch(url, { method: "PATCH", body: fd, credentials: "include" });
+      } else {
+        // JSON
+        const payload = {
+          name: { id: formData.name_id, en: formData.name_en },
+          slug: formData.slug || undefined,
+          parent_id: formData.parent_id ? Number(formData.parent_id) : null,
+          status: !!formData.status,
+        };
+
+        res = await fetch(url, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json", Accept: "application/json" },
+          body: JSON.stringify(payload),
+          credentials: "include",
+        });
+      }
+
+      const txt = await res.text().catch(() => "");
+      const json = txt ? JSON.parse(txt) : {};
+      if (!res.ok) throw new Error(json?.message || `Failed to update (${res.status})`);
+
+      console.log("✅ Category updated:", { id, response: json });
+      router.push("/product-category");
     } catch (e: any) {
-      alert(e?.response?.data?.message || e?.message || 'Failed to delete');
+      console.error("❌ Error updating category:", e);
+      setError(e?.message || "Failed to update");
     }
   };
 
-  if (loading) {
-    return <div className="p-6 text-gray-600">Loading...</div>;
-  }
+  // ✅ Hapus kategori
+  const handleDelete = async () => {
+    if (!confirm("Delete this category?")) return;
+    try {
+      const res = await fetchWithAuth(`/api/category/${id}`, { method: "DELETE" });
+      if (!res.ok) {
+        const msg = await res.text().catch(() => "");
+        throw new Error(msg || `Failed to delete (${res.status})`);
+      }
+      router.push("/product-category");
+    } catch (e: any) {
+      setError(e?.message || "Failed to delete");
+    }
+  };
+
+  const handleCancel = () => router.push("/product-category");
 
   return (
     <div className="min-h-full">
+      {/* Breadcrumb */}
       <div className="bg-white border-b border-gray-200 px-6 py-3">
         <nav className="flex items-center gap-2 text-sm text-gray-500">
           <span>Categories</span>
@@ -127,6 +232,7 @@ export default function EditCategoryPage() {
         </nav>
       </div>
 
+      {/* Header */}
       <div className="bg-white border-b border-gray-200 px-6 py-6">
         <div className="flex items-center justify-between">
           <h1 className="text-2xl font-semibold text-gray-900">Edit Category</h1>
@@ -134,6 +240,7 @@ export default function EditCategoryPage() {
         </div>
       </div>
 
+      {/* Main */}
       <div className="bg-gray-50 min-h-screen">
         <div className="px-6 py-6">
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -141,10 +248,18 @@ export default function EditCategoryPage() {
               <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
                 <h2 className="text-lg font-semibold text-gray-900 mb-6">Category</h2>
 
-                {error && <div className="mb-4 rounded border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>}
+                {error && (
+                  <div className="mb-4 rounded border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                    {error}
+                  </div>
+                )}
+                {loading && <div className="mb-4 text-sm text-gray-600">Loading…</div>}
 
+                {/* Name */}
                 <div className="mb-6">
-                  <div className="mb-2 text-sm font-medium text-gray-700">Name (Bahasa Indonesia) <span className="text-red-500">*</span></div>
+                  <div className="mb-2 text-sm font-medium text-gray-700">
+                    Name (Bahasa Indonesia) <span className="text-red-500">*</span>
+                  </div>
                   <input
                     type="text"
                     id="name_id"
@@ -155,6 +270,8 @@ export default function EditCategoryPage() {
                     placeholder="Sandal Jepit"
                   />
                 </div>
+
+                {/* English Name */}
                 <div className="mb-6">
                   <div className="mb-2 text-sm font-medium text-gray-700">Name (English)</div>
                   <input
@@ -168,9 +285,12 @@ export default function EditCategoryPage() {
                   />
                 </div>
 
+                {/* Slug + Parent */}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                   <div>
-                    <label htmlFor="slug" className="block text-sm font-medium text-gray-700 mb-2">Slug</label>
+                    <label htmlFor="slug" className="block text-sm font-medium text-gray-700 mb-2">
+                      Slug
+                    </label>
                     <input
                       type="text"
                       id="slug"
@@ -181,8 +301,11 @@ export default function EditCategoryPage() {
                       placeholder="sandal-jepit"
                     />
                   </div>
+
                   <div>
-                    <label htmlFor="parent_id" className="block text-sm font-medium text-gray-700 mb-2">Parent Category</label>
+                    <label htmlFor="parent_id" className="block text-sm font-medium text-gray-700 mb-2">
+                      Parent Category
+                    </label>
                     <select
                       id="parent_id"
                       name="parent_id"
@@ -193,45 +316,62 @@ export default function EditCategoryPage() {
                       <option value="">Select Parent Category</option>
                       {parentCategories.map((c) => (
                         <option key={c.id} value={c.id}>
-                          {typeof c.name === 'string' ? c.name : (c.name?.id || c.name?.en || `#${c.id}`)}
+                          {typeof c.name === "string"
+                            ? c.name
+                            : c.name?.id || c.name?.en || `#${c.id}`}
                         </option>
                       ))}
                     </select>
                   </div>
                 </div>
 
+                {/* Status */}
                 <div className="mt-6">
                   <label className="block text-sm font-medium text-gray-700 mb-2">Status</label>
                   <label className="inline-flex items-center gap-2">
-                    <input type="checkbox" name="status" checked={formData.status} onChange={handleInputChange} className="h-4 w-4 rounded border-gray-300" />
+                    <input
+                      type="checkbox"
+                      name="status"
+                      checked={formData.status}
+                      onChange={handleInputChange}
+                      className="h-4 w-4 rounded border-gray-300"
+                    />
                     <span className="text-sm text-gray-700">Active</span>
                   </label>
                 </div>
               </div>
             </div>
 
+            {/* Right column (Cover upload) */}
             <div className="space-y-6">
               <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
                 <h3 className="text-lg font-semibold text-gray-900 mb-4">Cover</h3>
                 <div className="mb-4">
-                  <label htmlFor="cover_file" className="block text-sm font-medium text-gray-700 mb-2">Cover File</label>
+                  <label htmlFor="cover_file" className="block text-sm font-medium text-gray-700 mb-2">
+                    Cover File
+                  </label>
                   <input
                     id="cover_file"
                     type="file"
                     accept="image/*"
-                    onChange={(e) => {
-                      const f = e.target.files?.[0] || null;
-                      setCoverFile(f);
-                    }}
+                    onChange={(e) => setCoverFile(e.target.files?.[0] || null)}
                     className="block w-full text-sm text-gray-900 file:mr-4 file:rounded-md file:border-0 file:bg-gray-100 file:px-3 file:py-2 file:text-sm file:font-semibold file:text-gray-700 hover:file:bg-gray-200"
                   />
                   {(coverFile || formData.cover_url) && (
                     <div className="mt-3">
                       <img
-                        src={coverFile ? URL.createObjectURL(coverFile) : formData.cover_url}
+                        src={
+                          coverFile
+                            ? URL.createObjectURL(coverFile)
+                            : formData.cover_url ||
+                              "data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNDgiIGhlaWdodD0iNDgiIHZpZXdCb3g9IjAgMCA0OCA0OCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iNDgiIGhlaWdodD0iNDgiIGZpbGw9IiNGM0Y0RjYiLz48cGF0aCBkPSJNMjQgMzZDMzAuNjI3NCAzNiAzNiAzMC42Mjc0IDM2IDI0QzM2IDE3LjM3MjYgMzAuNjI3NCAxMiAyNCAxMkMxNy4zNzI2IDEyIDEyIDE3LjM3MjYgMTIgMjRDMTIgMzAuNjI3NiAxNy4zNzI2IDM2IDI0IDM2WiIgc3Ryb2tlPSIjOUNBM0FGIiBzdHJva2Utd2lkdGg9IjIiLz48cGF0aCBkPSJNMjQgMjhDMjYuMjA5MSAyOCAyOCAyNi4yMDkxIDI4IDI0QzI4IDIxLjc5MDkgMjYuMjA5MSAyMCAyNCAyMEMyMS43OTA5IDIwIDIwIDIxLjc5MDkgMjAgMjRDMjAgMjYuMjA5MSAyMS43OTA5IDI4IDI0IDI4WiIgc3Ryb2tlPSIjOUNBM0FGIiBzdHJva2Utd2lkdGg9IjIiLz48L3N2Zz4="
+                        }
                         alt="Cover preview"
                         className="h-28 w-full max-w-xs rounded border object-cover"
-                        onLoad={(e) => { if (coverFile) URL.revokeObjectURL((e.target as HTMLImageElement).src); }}
+                        onLoad={(e) => {
+                          if (coverFile)
+                            URL.revokeObjectURL((e.target as HTMLImageElement).src);
+                        }}
                       />
                     </div>
                   )}

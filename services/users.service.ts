@@ -31,6 +31,21 @@ export async function listUsers(params: {
   return r;
 }
 
+export async function getUser(id: string | number) {
+  const res = await fetch(`/api/users/${id}`, {
+    method: "GET",
+    headers: {
+      Accept: "application/json",
+      "X-Requested-With": "XMLHttpRequest",
+    },
+    credentials: "include",
+  });
+  const text = await res.text().catch(() => "");
+  const data = text ? JSON.parse(text) : {};
+  // normalisasi agar aman untuk berbagai bentuk response
+  return data?.data ?? data;
+}
+
 export async function createUser(body: { name: string; email: string; password: string; status?: boolean }) {
   const r = await http<Envelope<LaravelUser>>(`/api/users`, {
     method: "POST",

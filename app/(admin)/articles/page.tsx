@@ -7,24 +7,15 @@ import ToggleSwitch from "@/components/ui/ToggleSwitch";
 import { EditButton } from "@/components/ui/EditIcon";
 import { DeleteButton } from "@/components/ui/DeleteIcon";
 import { Pagination } from "@/components/layout/Pagination";
-import api from "@/lib/fetching";
 import { Toast } from "@/components/ui/Toast";
 
-type ArticleItem = {
-  id: number;
-  cover_url?: string;
-  author_name?: string;
-  status: "publish" | "draft" | string;
-  published: boolean;
-  title_text?: string;
-};
-
-type ArticlesResponse = {
-  status: string;
-  message?: string;
-  data: ArticleItem[];
-  meta: { current_page: number; per_page: number; total: number; last_page: number };
-};
+// ✅ gunakan service yang benar-benar menyusun query string & lewat /api Next
+import {
+  listArticles,
+  deleteArticle as deleteArticleSvc,
+  type ArticleItem,
+  type ListResponse,
+} from "@/services/articles.service";
 
 export default function ArticlesPage() {
   // sumber data mentah seluruh artikel
@@ -38,16 +29,16 @@ export default function ArticlesPage() {
   const [error, setError] = useState<string | null>(null);
   const [toast, setToast] = useState<{ show: boolean; msg: string; variant?: "success" | "error" }>({ show: false, msg: "" });
 
-  // Fetch sekali: ambil "semua" artikel (atau sebanyak mungkin)
+  // Fetch sekali: ambil "semua" artikel (atau sebanyak mungkin) → local filter/pagination tetap jalan
   useEffect(() => {
     const run = async () => {
       setLoading(true);
       setError(null);
       try {
-        const { data } = await api.get<ArticlesResponse>("/articles", {
-          params: { page: 1, per_page: 1000 }, // ambil banyak agar bisa difilter lokal
-        });
-        setAllRows(Array.isArray(data.data) ? data.data : []);
+        // Penting: gunakan perPage (camelCase), service akan kirim ke /api/articles?perPage=...
+        const res: ListResponse<ArticleItem> = await listArticles({ page: 1, perPage: 1000, search: "" });
+        const rows = Array.isArray(res?.data) ? res.data : [];
+        setAllRows(rows);
       } catch (e: any) {
         setError(e?.message || "Gagal memuat artikel");
         setAllRows([]);
@@ -112,7 +103,7 @@ export default function ArticlesPage() {
     const ok = window.confirm("Hapus artikel ini?");
     if (!ok) return;
     try {
-      await api.delete(`/articles/${id}`);
+      await deleteArticleSvc(id);
       setToast({ show: true, msg: "Artikel berhasil dihapus", variant: "success" });
       // hapus dari sumber data lokal
       setAllRows(prev => prev.filter(a => a.id !== id));

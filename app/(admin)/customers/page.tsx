@@ -1,29 +1,13 @@
 "use client";
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import api from "@/lib/fetching";
 import { Pagination } from "@/components/layout/Pagination";
-
-type Customer = {
-  id: number;
-  full_name: string;
-  email: string;
-  whatsapp_number: string;
-};
-
-type CustomersResponse = {
-  status: string;
-  message: string;
-  data: Customer[];
-  meta: {
-    current_page: number;
-    per_page: number;
-    total: number;
-    last_page: number;
-  };
-};
+import {
+  listCustomers,
+  type Customer,
+  type CustomersResponse,
+} from "@/services/customers.service";
 
 function useDebounced<T>(value: T, delay = 400) {
   const [debounced, setDebounced] = useState(value);
@@ -41,6 +25,7 @@ export default function CustomersPage() {
 
   const initialSearch = searchParams.get("search") ?? "";
   const initialPage = Number(searchParams.get("page") || 1) || 1;
+  // URL tetap snake_case demi kompatibilitas tampilan
   const initialPerPage = Number(searchParams.get("per_page") || 10) || 10;
 
   const [search, setSearch] = useState(initialSearch);
@@ -54,7 +39,7 @@ export default function CustomersPage() {
   const debouncedSearch = useDebounced(search, 500);
   const firstLoad = useRef(true);
 
-  // Sinkronkan URL
+  // Sinkronkan URL (tetap pakai per_page di address bar)
   useEffect(() => {
     const params = new URLSearchParams(searchParams?.toString());
     params.set("page", String(page));
@@ -65,23 +50,21 @@ export default function CustomersPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [page, perPage, search]);
 
-  // Ambil data
+  // Ambil data via service (camelCase → dipetakan di App Route)
   useEffect(() => {
     let mounted = true;
     async function run() {
       setLoading(true);
       setError(null);
       try {
-        const { data } = await api.get<CustomersResponse>("/customers", {
-          params: {
-            page,
-            per_page: perPage,
-            search: debouncedSearch || undefined,
-          },
+        const res: CustomersResponse = await listCustomers({
+          page,
+          perPage,                    // ← camelCase
+          search: debouncedSearch || "",
         });
         if (!mounted) return;
-        setRows(data.data || []);
-        setTotal(data.meta?.total ?? 0);
+        setRows(Array.isArray(res?.data) ? res.data : []);
+        setTotal(res?.meta?.total ?? 0);
       } catch (e: any) {
         if (!mounted) return;
         setError(e?.message || "Gagal memuat data pelanggan");
@@ -126,9 +109,6 @@ export default function CustomersPage() {
               <td className="px-4 py-3">
                 <div className="h-4 w-40 rounded bg-gray-200" />
               </td>
-              <td className="px-4 py-3 text-right">
-                <div className="ml-auto h-8 w-16 rounded bg-gray-200" />
-              </td>
             </tr>
           ))}
         </tbody>
@@ -138,7 +118,7 @@ export default function CustomersPage() {
       return (
         <tbody>
           <tr>
-            <td colSpan={4} className="px-4 py-10 text-center text-gray-500">
+            <td colSpan={3} className="px-4 py-10 text-center text-gray-500">
               Tidak ada pelanggan ditemukan
             </td>
           </tr>
@@ -181,7 +161,7 @@ export default function CustomersPage() {
       {/* Card */}
       <div className="px-6 py-6">
         <div className="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
-          {/* Card toolbar: search + icons di kanan */}
+          {/* Toolbar kanan: Search */}
           <div className="flex items-center justify-end gap-2 border-b border-gray-200 px-4 py-3">
             <div className="relative">
               <input
@@ -249,18 +229,18 @@ export default function CustomersPage() {
               {tableBody}
             </table>
           </div>
-            {/* Pagination */}
-            <div className="border-t border-gray-200 px-4 py-3">
-              <Pagination
-                totalItems={total}
-                page={page}
-                pageSize={perPage}
-                onPageChange={onPageChange}
-                onPageSizeChange={onPageSizeChange}
-                pageSizeOptions={[3, 10, 20]}
-                className="bg-white"
-              />
-            </div>
+          {/* Pagination */}
+          <div className="border-t border-gray-200 px-4 py-3">
+            <Pagination
+              totalItems={total}
+              page={page}
+              pageSize={perPage}
+              onPageChange={onPageChange}
+              onPageSizeChange={onPageSizeChange}
+              pageSizeOptions={[3, 10, 20]}
+              className="bg-white"
+            />
+          </div>
         </div>
 
         {/* Error alert */}

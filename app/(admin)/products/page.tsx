@@ -414,7 +414,6 @@ export default function ProductsPage() {
                           </td>
 
                           <td className="whitespace-nowrap px-3 py-4 sm:px-6">
-                            <td className="whitespace-nowrap px-3 py-4 sm:px-6">
                               <div className="flex items-center gap-3 sm:gap-4">
                                 <EditButton
                                   onClick={() => handleEdit(p.id)}
@@ -424,7 +423,6 @@ export default function ProductsPage() {
                                 />
                               </div>
                             </td>
-                          </td>
                         </tr>
                       );
                     })

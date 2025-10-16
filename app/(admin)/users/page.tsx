@@ -8,7 +8,7 @@ import { StatusBadge } from "@/components/ui/StatusBadge";
 import { EditButton } from "@/components/ui/EditIcon";
 import { DeleteButton } from "@/components/ui/DeleteIcon";
 import { Pagination } from "@/components/layout/Pagination";
-import { listUsers, countUsersByStatus, deleteUser, type LaravelUser } from "@/services/users.service";
+import { listUsers, deleteUser, type LaravelUser } from "@/services/users.service";
 import { mapBoolToUi, type UiStatus } from "@/services/types";
 
 export default function UsersPage() {
@@ -54,21 +54,7 @@ export default function UsersPage() {
     return () => { alive = false; };
   }, [debounced, statusFilter, page, pageSize]);
 
-  useEffect(() => {
-    let alive = true;
-    (async () => {
-      try {
-        const [a, b, c] = await Promise.all([
-          countUsersByStatus("all", debounced || undefined),
-          countUsersByStatus("active", debounced || undefined),
-          countUsersByStatus("inactive", debounced || undefined)
-        ]);
-        if (!alive) return;
-        setAllCount(a); setActiveCount(b); setInactiveCount(c);
-      } catch { /* silent */ }
-    })();
-    return () => { alive = false; };
-  }, [debounced]);
+
 
   const displayRows = useMemo(
     () => rows.map(u => ({ id: u.id, name: u.name, email: u.email, uiStatus: mapBoolToUi(u.status) as UiStatus })),

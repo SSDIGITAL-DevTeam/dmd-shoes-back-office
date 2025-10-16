@@ -1,13 +1,41 @@
 // services/articles.service.ts
 import { apiGet, apiSend } from "@/lib/api/client";
-import type { ItemBase, ListResponse } from "@/types";
 
-export type ArticleItem = ItemBase & {
-  author_name?: string;
-  published_at?: string | null;
+export type ItemBase = {
+  id: number;
+  status?: string;
+  created_at?: string;
+  updated_at?: string;
 };
 
-export async function listArticles(params?: { page?: number; perPage?: number; search?: string }) {
+export type ListMeta = {
+  current_page: number;
+  per_page: number;
+  total: number;
+  last_page: number;
+};
+
+export type ListResponse<T> = {
+  status: string;
+  message?: string;
+  data: T[];
+  meta: ListMeta;
+};
+
+export type ArticleItem = ItemBase & {
+  cover_url?: string;
+  author_name?: string;
+  // back-end kirim status "publish"/"draft" + published boolean
+  published?: boolean;
+  title_text?: string;
+};
+
+export async function listArticles(params?: {
+  page?: number;
+  perPage?: number;
+  search?: string;
+}) {
+  // Penting: gunakan perPage (camelCase). Route Next akan memetakan ke per_page untuk backend.
   return apiGet<ListResponse<ArticleItem>>("/api/articles", {
     page: params?.page ?? 1,
     perPage: params?.perPage ?? 10,
