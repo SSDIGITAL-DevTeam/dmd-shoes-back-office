@@ -2,7 +2,14 @@
 import { NextRequest } from "next/server";
 import { ensureEnvOrThrow, makeApiUrl } from "../_utils/backend";
 
-/** Sama seperti di [id]/route.ts */
+/** Header anti-cache untuk semua response proxy */
+const noStoreHeaders = {
+  "content-type": "application/json",
+  "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+  Pragma: "no-cache",
+  Expires: "0",
+};
+
 function makeAuthHeaders(req: NextRequest) {
   const h = new Headers();
   h.set("Accept", "application/json");
@@ -39,6 +46,7 @@ async function buildBodyAndHeaders(req: NextRequest) {
     const inForm = await req.formData();
     const form = new FormData();
     inForm.forEach((v, k) => form.append(k, v));
+    // penting: JANGAN set Content-Type manual untuk FormData
     return { headers, body: form as BodyInit };
   }
 
@@ -52,7 +60,7 @@ export async function GET(req: NextRequest) {
   ensureEnvOrThrow();
   const { searchParams } = new URL(req.url);
 
-  // FE kirim perPage → backend Laravel minta per_page
+  // FE: perPage → BE: per_page
   const page = searchParams.get("page") ?? "";
   const perPage = searchParams.get("perPage") ?? "";
   const status = searchParams.get("status") ?? "";
@@ -64,24 +72,39 @@ export async function GET(req: NextRequest) {
   if (status) qs.set("status", status);
   if (parent) qs.set("parent", parent);
 
+  // ⛔ cache-buster untuk layer CDN/proxy di backend
+  qs.set("_", String(Date.now()));
+
   const res = await fetch(makeApiUrl(`categories?${qs.toString()}`), {
     method: "GET",
     headers: makeAuthHeaders(req),
+    cache: "no-store",
+    // @ts-ignore
+    next: { revalidate: 0 },
+    credentials: "include",
   });
+
   const txt = await res.text().catch(() => "");
-  return new Response(txt || "{}", { status: res.status, headers: { "content-type": "application/json" } });
+  return new Response(txt || "{}", { status: res.status, headers: noStoreHeaders });
 }
 
 /** CREATE → /categories (JSON / multipart) */
 export async function POST(req: NextRequest) {
   ensureEnvOrThrow();
   const { headers, body } = await buildBodyAndHeaders(req);
+
   const res = await fetch(makeApiUrl("categories"), {
     method: "POST",
     headers,
     body,
+    cache: "no-store",            // ⛔
+    // @ts-ignore
+    next: { revalidate: 0 },      // ⛔
   });
+
   const txt = await res.text().catch(() => "");
-  // beberapa API mengembalikan 201
-  return new Response(txt || "{}", { status: res.status, headers: { "content-type": "application/json" } });
+  return new Response(txt || "{}", {
+    status: res.status,           // beberapa API mengembalikan 201
+    headers: noStoreHeaders,      // ⛔
+  });
 }

@@ -25,37 +25,16 @@ type FormState = {
   cover_url: string;
 };
 
-// ===== helpers fetch (tanpa ubah lib) =====
-function getTokenFromStorage() {
-  if (typeof window === "undefined") return null;
-  return (
-    localStorage.getItem("access_token") ||
-    localStorage.getItem("token") ||
-    sessionStorage.getItem("access_token")
-  );
-}
+const withNoCache = (url: string) => `${url}${url.includes("?") ? "&" : "?"}_=${Date.now()}`;
 
 async function fetchJSON(input: string, init?: RequestInit) {
   const headers = new Headers(init?.headers || {});
   headers.set("Accept", "application/json");
   headers.set("X-Requested-With", "XMLHttpRequest");
-  const res = await fetch(input, { ...init, headers, credentials: "include" });
+  const res = await fetch(input, { ...init, headers, credentials: "include", cache: "no-store" });
   const text = await res.text().catch(() => "");
   const data = text ? JSON.parse(text) : {};
   return { ok: res.ok, status: res.status, data };
-}
-
-async function fetchWithAuth(input: string, init?: RequestInit) {
-  const headers = new Headers(init?.headers || {});
-  headers.set("Accept", "application/json");
-  headers.set("X-Requested-With", "XMLHttpRequest");
-
-  const token = getTokenFromStorage();
-  if (token && !headers.has("Authorization")) {
-    headers.set("Authorization", `Bearer ${token}`);
-  }
-
-  return fetch(input, { ...init, headers, credentials: "include" });
 }
 
 export default function EditCategoryPage() {
@@ -85,17 +64,16 @@ export default function EditCategoryPage() {
     }));
   };
 
-  // ✅ Load data kategori & parent tanpa ubah layout
+  // Load data kategori & parent
   useEffect(() => {
     let mounted = true;
     (async () => {
       setLoading(true);
       setError(null);
       try {
-        // ambil semua kategori
         const [listRes, parentsRes] = await Promise.all([
-          fetchJSON(`/api/category?perPage=100`),
-          fetchJSON(`/api/category?status=active&perPage=100`),
+          fetchJSON(withNoCache(`/api/category?perPage=100`)),
+          fetchJSON(withNoCache(`/api/category?status=active&perPage=100`)),
         ]);
 
         const list: ApiCategory[] =
@@ -116,12 +94,13 @@ export default function EditCategoryPage() {
             ? parentsRes.data.data.data
             : [];
 
-        // 🧩 filter parent hanya yang tidak memiliki parent_id & bukan dirinya sendiri
+        // filter parent: hanya yang top-level & bukan dirinya sendiri
         const topLevelParents = parentsRaw.filter((p) => !p.parent_id && p.id !== id);
+
         if (!mounted) return;
         setParentCategories(topLevelParents);
 
-        // cari kategori yang sedang diedit
+        // detail kategori yg diedit
         const found = list.find((c) => c.id === id);
         if (found) {
           const foundParent =
@@ -149,11 +128,10 @@ export default function EditCategoryPage() {
     };
   }, [id]);
 
-  // ✅ Simpan perubahan
   const handleSaveChanges = async () => {
     setError(null);
 
-    // ❗ Jangan izinkan memilih diri sendiri
+    // cegah pilih diri sendiri
     if (formData.parent_id && Number(formData.parent_id) === id) {
       setFormData((prev) => ({ ...prev, parent_id: "" }));
       setError("Parent category tidak boleh diri sendiri.");
@@ -165,7 +143,6 @@ export default function EditCategoryPage() {
       let res: Response;
 
       if (coverFile) {
-        // multipart
         const fd = new FormData();
         fd.append("name[id]", formData.name_id);
         fd.append("name[en]", formData.name_en);
@@ -174,9 +151,8 @@ export default function EditCategoryPage() {
         fd.append("status", formData.status ? "1" : "0");
         fd.append("cover", coverFile);
 
-        res = await fetch(url, { method: "PATCH", body: fd, credentials: "include" });
+        res = await fetch(url, { method: "PATCH", body: fd, credentials: "include", cache: "no-store" });
       } else {
-        // JSON
         const payload = {
           name: { id: formData.name_id, en: formData.name_en },
           slug: formData.slug || undefined,
@@ -189,6 +165,7 @@ export default function EditCategoryPage() {
           headers: { "Content-Type": "application/json", Accept: "application/json" },
           body: JSON.stringify(payload),
           credentials: "include",
+          cache: "no-store",
         });
       }
 
@@ -198,22 +175,23 @@ export default function EditCategoryPage() {
 
       console.log("✅ Category updated:", { id, response: json });
       router.push("/product-category");
+      router.refresh(); // 🔄 paksa re-fetch data di App Router
     } catch (e: any) {
       console.error("❌ Error updating category:", e);
       setError(e?.message || "Failed to update");
     }
   };
 
-  // ✅ Hapus kategori
   const handleDelete = async () => {
     if (!confirm("Delete this category?")) return;
     try {
-      const res = await fetchWithAuth(`/api/category/${id}`, { method: "DELETE" });
+      const res = await fetch(withNoCache(`/api/category/${id}`), { method: "DELETE", credentials: "include" });
       if (!res.ok) {
         const msg = await res.text().catch(() => "");
         throw new Error(msg || `Failed to delete (${res.status})`);
       }
       router.push("/product-category");
+      router.refresh();
     } catch (e: any) {
       setError(e?.message || "Failed to delete");
     }
@@ -255,7 +233,7 @@ export default function EditCategoryPage() {
                 )}
                 {loading && <div className="mb-4 text-sm text-gray-600">Loading…</div>}
 
-                {/* Name */}
+                {/* Name ID */}
                 <div className="mb-6">
                   <div className="mb-2 text-sm font-medium text-gray-700">
                     Name (Bahasa Indonesia) <span className="text-red-500">*</span>
@@ -271,7 +249,7 @@ export default function EditCategoryPage() {
                   />
                 </div>
 
-                {/* English Name */}
+                {/* Name EN */}
                 <div className="mb-6">
                   <div className="mb-2 text-sm font-medium text-gray-700">Name (English)</div>
                   <input
@@ -382,7 +360,7 @@ export default function EditCategoryPage() {
 
           <div className="mt-8 flex items-center gap-4">
             <DraftButton onClick={handleSaveChanges}>Save Changes</DraftButton>
-            <CancelButton onClick={handleCancel} />
+            <CancelButton onClick={() => router.push("/product-category")} />
           </div>
         </div>
       </div>

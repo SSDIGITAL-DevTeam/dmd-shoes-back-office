@@ -14,7 +14,7 @@ type SortDir = "asc" | "desc";
 type ApiCategory = {
   id: number;
   parent_id: number | null;
-  name?: { id?: string; en?: string };
+  name?: { id?: string; en?: string } | string;
   name_text?: string;
   slug?: string;
   status?: boolean;
@@ -23,12 +23,13 @@ type ApiCategory = {
   parent_brief?: { id: number; slug: string; name?: { id?: string; en?: string } } | null;
 };
 
-// fetch helpers
+const withNoCache = (url: string) => `${url}${url.includes("?") ? "&" : "?"}_=${Date.now()}`;
+
 async function fetchJSON(input: string, init?: RequestInit) {
   const headers = new Headers(init?.headers || {});
   headers.set("Accept", "application/json");
   headers.set("X-Requested-With", "XMLHttpRequest");
-  const res = await fetch(input, { ...init, headers, credentials: "include" });
+  const res = await fetch(input, { ...init, headers, credentials: "include", cache: "no-store" });
   const text = await res.text().catch(() => "");
   const data = text ? JSON.parse(text) : {};
   return { ok: res.ok, status: res.status, data };
@@ -54,16 +55,11 @@ export default function ProductCategoryPage() {
     setLoading(true);
     setError(null);
     try {
-      // gunakan perPage (camelCase) — proxy akan map ke per_page
-      const res = await fetchJSON(`/api/category?perPage=100&status=all`);
-      const data =
-        Array.isArray(res.data?.data) ? res.data.data :
-        Array.isArray(res.data) ? res.data :
-        Array.isArray(res.data?.data?.data) ? res.data.data.data : [];
+      const res = await fetchJSON(withNoCache(`/api/category?perPage=100&status=all`));
+      const data = res.data?.data ?? res.data ?? [];
       setCategories(Array.isArray(data) ? data : []);
     } catch (e: any) {
-      setError(e?.message || "Failed to fetch categories");
-      setCategories([]);
+      setError(e?.response?.data?.message || e?.message || "Failed to fetch categories");
     } finally {
       setLoading(false);
     }
@@ -71,6 +67,7 @@ export default function ProductCategoryPage() {
 
   useEffect(() => { loadCategories(); }, [loadCategories]);
 
+  // refetch saat kembali dari edit/create
   useEffect(() => {
     const onFocus = () => loadCategories();
     const onPageShow = (e: PageTransitionEvent) => { if ((e as any).persisted) loadCategories(); };
@@ -88,10 +85,11 @@ export default function ProductCategoryPage() {
     if (query.trim()) {
       const q = query.trim().toLowerCase();
       data = data.filter((c) => {
-        const id = c.name?.id || c.name_text || "";
-        const en = c.name?.en || "";
-        const slug = c.slug || "";
-        return [id, en, slug].some((s) => s?.toLowerCase().includes(q));
+        const nameStr =
+          typeof c.name === "string"
+            ? c.name
+            : (c.name?.id || c.name_text || c.slug || c.name?.en || "");
+        return nameStr.toLowerCase().includes(q);
       });
     }
 
@@ -100,8 +98,10 @@ export default function ProductCategoryPage() {
     }
 
     data.sort((a, b) => {
-      const left = (a.name?.id || a.name_text || a.slug || "").toLowerCase();
-      const right = (b.name?.id || b.name_text || b.slug || "").toLowerCase();
+      const left =
+        (typeof a.name === "string" ? a.name : (a.name?.id || a.name_text || a.slug || ""))?.toLowerCase?.() || "";
+      const right =
+        (typeof b.name === "string" ? b.name : (b.name?.id || b.name_text || b.slug || ""))?.toLowerCase?.() || "";
       return sortDir === "asc" ? left.localeCompare(right) : right.localeCompare(left);
     });
 
@@ -117,18 +117,26 @@ export default function ProductCategoryPage() {
   const handlePageSizeChange = (n: number) => { setItemsPerPage(n); setCurrentPage(1); };
   React.useEffect(() => setCurrentPage(1), [query, parentFilter, sortDir]);
 
-  const handleNewCategory = () => router.push("/product-category/create");
-  const handleEdit = (id: number) => router.push(`/product-category/edit/${id}`);
+  const handleNewCategory = () => router.push("/product-category");
+  const handleEdit = (id: number) => {
+    router.push(`/product-category/edit/${id}`);
+    // jaga-jaga: bila layout pakai server component, paksa refresh
+    router.refresh();
+  };
 
   const handleDelete = async (id: number) => {
     if (!confirm("Are you sure you want to delete this category?")) return;
     try {
-      // forward cookie/Authorization otomatis via proxy
-      const res = await fetch(`/api/category/${id}`, { method: "DELETE", credentials: "include" });
-      if (!res.ok) throw new Error(`Failed to delete (${res.status})`);
-      await loadCategories();
+      setCategories((prev) => prev.filter((c) => c.id !== id));
+      await fetch(`/api/category/${id}`, {
+        method: "DELETE",
+        credentials: "include",
+        headers: new Headers({ "X-Requested-With": "XMLHttpRequest", Accept: "application/json" }),
+        cache: "no-store",
+      });
+      await loadCategories(); // pastikan fresh
     } catch (e: any) {
-      setError(e?.message || "Failed to delete");
+      setError(e?.response?.data?.message || e?.message || "Failed to delete");
       await loadCategories();
     }
   };
@@ -148,7 +156,7 @@ export default function ProductCategoryPage() {
       <div className="bg-white border-b border-gray-200 px-6 py-6">
         <div className="flex items-center justify-between">
           <h1 className="text-2xl font-semibold text-gray-900">Categories</h1>
-          <NewNounButton noun="Category" onClick={handleNewCategory} />
+          <NewNounButton noun="Category" onClick={() => router.push("/product-category/create")} />
         </div>
       </div>
 
@@ -156,16 +164,22 @@ export default function ProductCategoryPage() {
       <div className="bg-gray-50">
         <div className="px-6 py-6">
           <div className="rounded-xl border border-gray-200 bg-white shadow-sm">
-            {/* Toolbar */}
+            {/* Card toolbar */}
             <div className="flex items-center justify-end gap-2 border-b border-gray-200 px-4 py-3">
+              {/* Search (pill) */}
               <div className="relative">
                 <input
                   value={query}
                   onChange={(e) => setQuery(e.target.value)}
                   placeholder="Search"
-                  className="w-56 rounded-lg border border-gray-300 py-2 pl-9 pr-3 text-sm placeholder:text-gray-400 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="w-56 rounded-lg border border-gray-300 py-2 pl-9 pr-3 text-sm text-black placeholder:text-gray-400 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-blue-500"
                 />
-                <svg className="absolute left-3 top-2.5 h-4 w-4 text-gray-400" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                <svg
+                  className="absolute left-3 top-2.5 h-4 w-4 text-black"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                >
                   <path strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" d="M21 21l-4.35-4.35M16 10a6 6 0 1 0-12 0a6 6 0 0 0 12 0Z" />
                 </svg>
               </div>
@@ -185,7 +199,9 @@ export default function ProductCategoryPage() {
                       <th className="w-12 px-3 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 sm:px-6">
                         <input type="checkbox" className="rounded border-gray-300" />
                       </th>
-                      <th className="px-3 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 sm:px-6">Cover</th>
+                      <th className="px-3 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 sm:px-6">
+                        Cover
+                      </th>
                       <th className="px-3 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 sm:px-6">
                         <div className="flex items-center gap-1">
                           <span>Name</span>
@@ -202,56 +218,60 @@ export default function ProductCategoryPage() {
                           </svg>
                         </div>
                       </th>
-                      <th className="px-3 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 sm:px-6">Actions</th>
+                      <th className="px-3 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 sm:px-6">
+                        Actions
+                      </th>
                     </tr>
                   </thead>
 
                   <tbody className="divide-y divide-gray-200">
-                    {currentCategories.map((category) => (
-                      <tr key={category.id} className="hover:bg-gray-50 bg-white">
-                        <td className="whitespace-nowrap px-3 py-4 sm:px-6">
-                          <input type="checkbox" className="rounded border-gray-300" />
-                        </td>
-                        <td className="whitespace-nowrap px-3 py-4 sm:px-6">
-                          <div className="h-12 w-12 overflow-hidden rounded bg-gray-200">
-                            <img
-                              src={category.cover_url || category.cover || "data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNDgiIGhlaWdodD0iNDgiIHZpZXdCb3g9IjAgMCA0OCA0OCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iNDgiIGhlaWdodD0iNDgiIGZpbGw9IiNGM0Y0RjYiLz48cGF0aCBkPSJNMjQgMzZDMzAuNjI3NCAzNiAzNiAzMC42Mjc0IDM2IDI0QzM2IDE3LjM3MjYgMzAuNjI3NCAxMiAyNCAxMkMxNy4zNzI2IDEyIDEyIDE3LjM3MjYgMTIgMjRDMTIgMzAuNjI3NiAxNy4zNzI2IDM2IDI0IDM2WiIgc3Ryb2tlPSIjOUNBM0FGIiBzdHJva2Utd2lkdGg9IjIiLz48cGF0aCBkPSJNMjQgMjhDMjYuMjA5MSAyOCAyOCAyNi4yMDkxIDI4IDI0QzI4IDIxLjc5MDkgMjYuMjA5MSAyMCAyNCAyMEMyMS43OTA5IDIwIDIwIDIxLjc5MDkgMjAgMjRDMjAgMjYuMjA5MSAyMS43OTA5IDI4IDI0IDI4WiIgc3Ryb2tlPSIjOUNBM0FGIiBzdHJva2Utd2lkdGg9IjIiLz48L3N2Zz4="}
-                              alt="Category cover"
-                              className="h-full w-full object-cover"
-                            />
-                          </div>
-                        </td>
-                        <td className="px-3 py-4 sm:px-6">
-                          <div className="max-w-xs truncate text-sm font-medium text-gray-900">
-                            {category.name_text || category.name?.id || category.name?.en || "-"}
-                          </div>
-                        </td>
-                        <td className="hidden whitespace-nowrap px-3 py-4 text-sm text-gray-900 sm:table-cell sm:px-6">
-                          {category.parent_brief?.slug || "-"}
-                        </td>
-                        <td className="whitespace-nowrap px-3 py-4 sm:px-6">
-                          <div className="flex items-center gap-3 sm:gap-4">
-                            <DeleteButton onClick={() => handleDelete(category.id)} />
-                            <EditButton onClick={() => handleEdit(category.id)} />
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
+                    {currentCategories.map((category) => {
+                      const nameStr =
+                        typeof category.name === "string"
+                          ? category.name
+                          : (category.name?.id || category.name_text || category.slug || category.name?.en || "-");
 
-                    {currentCategories.length === 0 && !loading && !error && (
-                      <tr>
-                        <td className="px-4 py-10 text-center text-gray-500" colSpan={5}>
-                          No data
-                        </td>
-                      </tr>
-                    )}
+                      return (
+                        <tr key={category.id} className="hover:bg-gray-50 bg-white">
+                          <td className="whitespace-nowrap px-3 py-4 sm:px-6">
+                            <input type="checkbox" className="rounded border-gray-300" />
+                          </td>
+                          <td className="whitespace-nowrap px-3 py-4 sm:px-6">
+                            <div className="h-12 w-12 overflow-hidden rounded bg-gray-200">
+                              <img
+                                src={category.cover_url || category.cover || "/api/placeholder/50/50"}
+                                alt="Category cover"
+                                className="h-full w-full object-cover"
+                                onError={(e) => {
+                                  e.currentTarget.src =
+                                    "data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNDgiIGhlaWdodD0iNDgiIHZpZXdCb3g9IjAgMCA0OCA0OCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iNDgiIGhlaWdodD0iNDgiIGZpbGw9IiNGM0Y0RjYiLz48cGF0aCBkPSJNMjQgMzZDMzAuNjI3NCAzNiAzNiAzMC42Mjc0IDM2IDI0QzM2IDE3LjM3MjYgMzAuNjI3NCAxMiAyNCAxMkMxNy4zNzI2IDEyIDEyIDE3LjM3MjYgMTIgMjRDMTIgMzAuNjI3NiAxNy4zNzI2IDM2IDI0IDM2WiIgc3Ryb2tlPSIjOUNBM0FGIiBzdHJva2Utd2lkdGg9IjIiLz48cGF0aCBkPSJNMjQgMjhDMjYuMjA5MSAyOCAyOCAyNi4yMDkxIDI4IDI0QzI4IDIxLjc5MDkgMjYuMjA5MSAyMCAyNCAyMEMyMS43OTA5IDIwIDIwIDIxLjc5MDkgMjAgMjRDMjAgMjYuMjA5MSAyMS43OTA5IDI4IDI0IDI4WiIgc3Ryb2tlPSIjOUNBM0FGIiBzdHJva2Utd2lkdGg9IjIiLz48L3N2Zz4=";
+                                }}
+                              />
+                            </div>
+                          </td>
+                          <td className="px-3 py-4 sm:px-6">
+                            <div className="max-w-xs truncate text-sm font-medium text-gray-900">{nameStr}</div>
+                          </td>
+                          <td className="hidden whitespace-nowrap px-3 py-4 text-sm text-gray-900 sm:table-cell sm:px-6">
+                            {category.parent_brief?.slug || "-"}
+                          </td>
+                          <td className="whitespace-nowrap px-3 py-4 sm:px-6">
+                            <div className="flex items-center gap-3 sm:gap-4">
+                              <DeleteButton onClick={() => handleDelete(category.id)} />
+                              <EditButton onClick={() => handleEdit(category.id)} />
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               )}
             </div>
 
-            {/* Footer: Pagination */}
             <hr />
+
+            {/* Footer: Pagination */}
             <div className="border-t border-gray-200 px-4 py-3">
               <Pagination
                 totalItems={totalItems}

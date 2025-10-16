@@ -2,7 +2,14 @@
 import { NextRequest } from "next/server";
 import { ensureEnvOrThrow, makeApiUrl } from "../../_utils/backend";
 
-/** header dasar + auth dari cookie/header */
+/** Header anti-cache */
+const noStoreHeaders = {
+  "content-type": "application/json",
+  "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+  Pragma: "no-cache",
+  Expires: "0",
+};
+
 function makeAuthHeaders(req: NextRequest) {
   const h = new Headers();
   h.set("Accept", "application/json");
@@ -14,8 +21,7 @@ function makeAuthHeaders(req: NextRequest) {
   if (!auth) {
     const rawCookie = req.headers.get("cookie") || "";
     const token = rawCookie
-      .split(";")
-      .map((s) => s.trim())
+      .split(";").map((s) => s.trim())
       .find((s) => s.startsWith("access_token="))
       ?.split("=")[1];
     if (token) h.set("Authorization", `Bearer ${decodeURIComponent(token)}`);
@@ -32,7 +38,11 @@ function makeAuthHeaders(req: NextRequest) {
 }
 
 /** Normalisasi body agar cocok dengan API backend */
-async function normalizeCategoryBody(req: NextRequest) {
+async function normalizeCategoryBody(req: NextRequest): Promise<{
+  headers: HeadersInit;
+  body: BodyInit;
+  isMultipart: boolean;
+}> {
   const base = makeAuthHeaders(req);
   const contentType = req.headers.get("content-type") || "";
 
@@ -46,37 +56,31 @@ async function normalizeCategoryBody(req: NextRequest) {
     const slug = (inForm.get("slug") ?? "") as string;
     const parent_id = inForm.get("parent_id");
     const statusRaw = inForm.get("status");
-    const status =
-      statusRaw === "true" || statusRaw === "1";
-
+    const status = statusRaw === "true" || statusRaw === "1";
     const cover = inForm.get("cover");
 
-    // Laravel paling aman membaca array nested via name[id]/name[en]
+    // Laravel biasa pakai field bertingkat
     fd.append("name[id]", name_id);
     fd.append("name[en]", name_en);
     if (slug) fd.append("slug", slug);
-
-    // jika parent kosong -> JANGAN kirim field tersebut (biar null/unsent)
     if (parent_id !== null && parent_id !== "" && parent_id !== "null") {
       fd.append("parent_id", String(parent_id));
     }
-
-    // status kirim sebagai "1"/"0"
     fd.append("status", status ? "1" : "0");
-
     if (cover) fd.append("cover", cover as Blob);
 
-    base.set("Accept", "application/json"); // Content-Type biarkan browser yang set
-    return { headers: base as HeadersInit, body: fd as BodyInit };
+    // JANGAN set Content-Type; biarkan boundary otomatis
+    base.set("Accept", "application/json");
+
+    return { headers: base as HeadersInit, body: fd as BodyInit, isMultipart: true };
   }
 
-  // --- JSON biasa (tanpa file) ---
+  // --- JSON (tanpa file) ---
   const body = await req.json().catch(() => ({} as any));
   const payload = {
     name: { id: body?.name?.id ?? body?.name_id ?? "", en: body?.name?.en ?? body?.name_en ?? "" },
     slug: body.slug ?? undefined,
-    parent_id:
-      body.parent_id === "" || body.parent_id === undefined ? null : body.parent_id,
+    parent_id: body.parent_id === "" || body.parent_id === undefined ? null : body.parent_id,
     status: !!body.status,
   };
 
@@ -85,6 +89,7 @@ async function normalizeCategoryBody(req: NextRequest) {
   return {
     headers: base as HeadersInit,
     body: JSON.stringify(payload) as BodyInit,
+    isMultipart: false,
   };
 }
 
@@ -92,29 +97,49 @@ async function normalizeCategoryBody(req: NextRequest) {
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   ensureEnvOrThrow();
   const { id } = await params;
-  const res = await fetch(makeApiUrl(`categories/${id}`), {
+  const res = await fetch(makeApiUrl(`categories/${id}?_=${Date.now()}`), {
     method: "GET",
     headers: makeAuthHeaders(req),
+    cache: "no-store",
+    // @ts-ignore
+    next: { revalidate: 0 },
+    credentials: "include",
   });
   const txt = await res.text().catch(() => "");
-  return new Response(txt || "{}", { status: res.status, headers: { "content-type": "application/json" } });
+  return new Response(txt || "{}", { status: res.status, headers: noStoreHeaders });
 }
 
-/** PATCH /api/category/:id */
+/** PATCH /api/category/:id  (POST + _method=PATCH bila multipart) */
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   ensureEnvOrThrow();
   const { id } = await params;
-  const { headers, body } = await normalizeCategoryBody(req);
+  const { headers, body, isMultipart } = await normalizeCategoryBody(req);
+
+  let method = "PATCH";
+  let finalBody: BodyInit = body;
+
+  if (isMultipart && body instanceof FormData) {
+    // Laravel lebih stabil menerima file via POST + _method override
+    body.append("_method", "PATCH");
+    method = "POST";
+    finalBody = body;
+  }
+
   const res = await fetch(makeApiUrl(`categories/${id}`), {
-    method: "PATCH", // backend memang support PATCH
+    method,
     headers,
-    body,
+    body: finalBody,
+    cache: "no-store",
+    // @ts-ignore
+    next: { revalidate: 0 },
+    credentials: "include",
   });
+
   const txt = await res.text().catch(() => "");
-  return new Response(txt || "{}", { status: res.status, headers: { "content-type": "application/json" } });
+  return new Response(txt || "{}", { status: res.status, headers: noStoreHeaders });
 }
 
-/** PUT -> redirect ke PATCH (jaga-jaga kalau ada pemanggilan PUT) */
+/** PUT -> redirect ke PATCH */
 export async function PUT(req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
   return PATCH(req, ctx);
 }
@@ -126,7 +151,11 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
   const res = await fetch(makeApiUrl(`categories/${id}`), {
     method: "DELETE",
     headers: makeAuthHeaders(req),
+    cache: "no-store",
+    // @ts-ignore
+    next: { revalidate: 0 },
+    credentials: "include",
   });
   const txt = await res.text().catch(() => "");
-  return new Response(txt || "{}", { status: res.status, headers: { "content-type": "application/json" } });
+  return new Response(txt || "{}", { status: res.status, headers: noStoreHeaders });
 }
