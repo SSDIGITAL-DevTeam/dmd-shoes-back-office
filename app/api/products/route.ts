@@ -54,6 +54,9 @@ async function buildCreateBody(req: NextRequest) {
     fd.append("description[id]", String(inForm.get("description[id]") ?? inForm.get("description_id") ?? ""));
     fd.append("description[en]", String(inForm.get("description[en]") ?? inForm.get("description_en") ?? ""));
 
+    const pm = inForm.get("pricing_mode") ?? inForm.get("pricingMode");
+    if (pm != null) fd.append("pricing_mode", String(pm));
+    
     const slug = inForm.get("slug");
     if (slug) fd.append("slug", String(slug));
 
@@ -108,10 +111,11 @@ async function buildCreateBody(req: NextRequest) {
   const body = await req.json().catch(() => ({}));
   // pastikan boolean murni
   const payload = {
-    ...body,
-    status: body.status === true || body.status === 1,
-    featured: body.featured === true || body.featured === 1,
-  };
+  ...body,
+  pricing_mode: body.pricing_mode ?? body.pricingMode, // <— penting
+  status: body.status === true || body.status === 1,
+  featured: body.featured === true || body.featured === 1,
+};
 
   base.set("Content-Type", "application/json");
   return { headers: base as HeadersInit, body: JSON.stringify(payload) as BodyInit };

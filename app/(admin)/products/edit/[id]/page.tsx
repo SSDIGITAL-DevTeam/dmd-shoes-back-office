@@ -656,7 +656,7 @@ export default function EditProductPage() {
                           // eslint-disable-next-line @next/next/no-img-element
                           <img src={option.image} alt={option.label} className="w-6 h-6 rounded object-cover" />
                         )}
-                        <span>{option.label}</span>
+                        <span className="text-gray-700">{option.label}</span>
                       </div>
                     )}
                     styles={{
@@ -1029,7 +1029,6 @@ export default function EditProductPage() {
                 />
               </div>
             </div>
-            {/* ------- END COPY ------- */}
           </div>
 
           {/* Actions */}
