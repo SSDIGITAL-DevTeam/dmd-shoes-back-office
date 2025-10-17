@@ -1,6 +1,6 @@
 import { NextRequest } from "next/server";
-import { ensureEnvOrThrow, makeApiUrl, readCookie } from "../_utils/backend";
-import { http } from "../_utils/http";
+import { ensureEnvOrThrow, makeApiUrl, readCookie } from "../../_utils/backend";
+import { http } from "../../_utils/http";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;

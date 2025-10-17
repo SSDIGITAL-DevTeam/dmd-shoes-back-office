@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { NewNounButton } from "@/components/ui/AddButton";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import ToggleSwitch from "@/components/ui/ToggleSwitch";
@@ -8,95 +8,173 @@ import { EditButton } from "@/components/ui/EditIcon";
 import { DeleteButton } from "@/components/ui/DeleteIcon";
 import { Pagination } from "@/components/layout/Pagination";
 import { Toast } from "@/components/ui/Toast";
+import Image from "next/image";
 
-// ✅ gunakan service yang benar-benar menyusun query string & lewat /api Next
 import {
   listArticles,
   deleteArticle as deleteArticleSvc,
+  toggleArticle,
   type ArticleItem,
   type ListResponse,
 } from "@/services/articles.service";
 
+/** debounce helper */
+function useDebounced<T>(value: T, delay = 350) {
+  const [v, setV] = useState(value);
+  useEffect(() => {
+    const t = setTimeout(() => setV(value), delay);
+    return () => clearTimeout(t);
+  }, [value, delay]);
+  return v;
+}
+
 export default function ArticlesPage() {
-  // sumber data mentah seluruh artikel
-  const [allRows, setAllRows] = useState<ArticleItem[]>([]);
+  // server data
+  const [rows, setRows] = useState<ArticleItem[]>([]);
+  const [meta, setMeta] = useState<{ total: number; current_page: number; last_page: number }>({
+    total: 0,
+    current_page: 1,
+    last_page: 1,
+  });
+
   // ui state
   const [activeFilter, setActiveFilter] = useState<"All" | "Publish" | "Draft">("All");
   const [query, setQuery] = useState("");
+  const debouncedQuery = useDebounced(query, 350);
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage, setItemsPerPage] = useState(10);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [toast, setToast] = useState<{ show: boolean; msg: string; variant?: "success" | "error" }>({ show: false, msg: "" });
+  const [toast, setToast] = useState<{ show: boolean; msg: string; variant?: "success" | "error" }>({
+    show: false,
+    msg: "",
+  });
 
-  // Fetch sekali: ambil "semua" artikel (atau sebanyak mungkin) → local filter/pagination tetap jalan
+  // --- effect untuk baca ?msg= dan hapus query ---
   useEffect(() => {
-    const run = async () => {
-      setLoading(true);
-      setError(null);
-      try {
-        // Penting: gunakan perPage (camelCase), service akan kirim ke /api/articles?perPage=...
-        const res: ListResponse<ArticleItem> = await listArticles({ page: 1, perPage: 1000, search: "" });
-        const rows = Array.isArray(res?.data) ? res.data : [];
-        setAllRows(rows);
-      } catch (e: any) {
-        setError(e?.message || "Gagal memuat artikel");
-        setAllRows([]);
-      } finally {
-        setLoading(false);
-      }
-    };
-    run();
+    const sp = new URLSearchParams(window.location.search);
+    const msg = sp.get("msg");
+    if (!msg) return;
+
+    if (msg === "published") {
+      setToast({ show: true, msg: "Artikel berhasil dipublish", variant: "success" });
+    } else if (msg === "draft") {
+      setToast({ show: true, msg: "Draft tersimpan", variant: "success" });
+    }
+
+    // bersihkan URL
+    window.history.replaceState(null, "", "/articles");
   }, []);
 
-  // Filter lokal (status + search)
-  const filteredRows = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    let list = allRows;
+  // simpan controller biar bisa cancel fetch ketika param berubah cepat
+  const abortRef = useRef<AbortController | null>(null);
 
-    if (activeFilter === "Publish") {
-      list = list.filter(a => String(a.status).toLowerCase() === "publish" || a.published === true);
-    } else if (activeFilter === "Draft") {
-      list = list.filter(a => String(a.status).toLowerCase() === "draft" || a.published === false);
-    }
+  /** map filter UI -> status backend */
+  const statusParam = useMemo<"publish" | "draft" | undefined>(() => {
+    if (activeFilter === "Publish") return "publish";
+    if (activeFilter === "Draft") return "draft";
+    return undefined;
+  }, [activeFilter]);
 
-    if (q) {
-      list = list.filter(a => {
-        const title = (a.title_text || "").toLowerCase();
-        const author = (a.author_name || "").toLowerCase();
-        return title.includes(q) || author.includes(q);
+  /** fetch dari backend (server-driven pagination + filter + search) */
+  const fetchArticles = async () => {
+    abortRef.current?.abort();
+    const ctl = new AbortController();
+    abortRef.current = ctl;
+
+    setLoading(true);
+    setError(null);
+    try {
+      const res: ListResponse<ArticleItem> = await listArticles({
+        page: currentPage,
+        perPage: itemsPerPage,
+        search: debouncedQuery,
+        status: statusParam,
+        lang: "id", // opsional
       });
+
+      if (ctl.signal.aborted) return;
+
+      setRows(Array.isArray(res?.data) ? res.data : []);
+      setMeta({
+        total: res?.meta?.total ?? 0,
+        current_page: res?.meta?.current_page ?? 1,
+        last_page: res?.meta?.last_page ?? 1,
+      });
+    } catch (e: any) {
+      if (ctl.signal.aborted) return;
+      setRows([]);
+      setMeta({ total: 0, current_page: 1, last_page: 1 });
+      setError(e?.message || "Gagal memuat artikel");
+    } finally {
+      if (!abortRef.current?.signal.aborted) setLoading(false);
     }
+  };
 
-    return list;
-  }, [allRows, activeFilter, query]);
+  /** trigger fetch saat param berubah */
+  useEffect(() => {
+    fetchArticles();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentPage, itemsPerPage, debouncedQuery, statusParam]);
 
-  // Pagination lokal dari filteredRows
-  const totalItems = filteredRows.length;
-  const pageRows = useMemo(() => {
-    const start = (currentPage - 1) * itemsPerPage;
-    const end = start + itemsPerPage;
-    return filteredRows.slice(start, end);
-  }, [filteredRows, currentPage, itemsPerPage]);
-
-  // Reset halaman saat ganti filter / query
+  /** reset ke page 1 saat filter/search berubah agar hasilnya masuk halaman pertama */
   useEffect(() => {
     setCurrentPage(1);
-  }, [activeFilter, query]);
+  }, [statusParam, debouncedQuery]);
 
-  // Toggle publish (lokal saja—tidak call API)
-  const handleTogglePublish = (id: number) => {
-    setAllRows(prev =>
-      prev.map(a =>
-        a.id === id
-          ? { ...a, published: !a.published, status: !a.published ? "publish" : "draft" }
-          : a
-      )
+  // di ArticlesPage component:
+  const [togglingIds, setTogglingIds] = useState<Set<number>>(new Set());
+
+  const handleTogglePublish = async (id: number) => {
+    const target = rows.find(r => r.id === id);
+    if (!target) return;
+
+    // state baru yang akan di-set
+    const nextPublished = !Boolean(target.published);
+    const nextStatus: "publish" | "draft" = nextPublished ? "publish" : "draft";
+
+    // optimistic update
+    setRows(prev =>
+      prev.map(a => a.id === id ? { ...a, published: nextPublished, status: nextStatus } : a)
     );
+    setTogglingIds(prev => new Set(prev).add(id));
+
+    try {
+      // panggil Next route -> Laravel PATCH /api/v1/articles/{id}/status
+      await toggleArticle(id, { status: nextStatus, published: nextPublished, lang: "id" });
+
+      // optional: refetch biar meta sinkron/ikut format backend
+      await fetchArticles();
+      setToast({ show: true, msg: "Status artikel diperbarui", variant: "success" });
+    } catch (e: any) {
+      // rollback kalau gagal
+      setRows(prev =>
+        prev.map(a => a.id === id ? { ...a, published: !nextPublished, status: target.status } : a)
+      );
+      setToast({ show: true, msg: e?.message || "Gagal memperbarui status", variant: "error" });
+    } finally {
+      setTogglingIds(prev => {
+        const n = new Set(prev);
+        n.delete(id);
+        return n;
+      });
+    }
   };
 
   const handleEdit = (id: number) => {
     window.location.href = `/articles/edit/${id}`;
+  };
+
+  const refetchAfterDeleteIfNeeded = (remainingItemsOnThisPage: number) => {
+    // kalau halaman jadi kosong dan masih punya halaman sebelumnya, geser 1 halaman dan refetch
+    const willBeEmpty = remainingItemsOnThisPage === 0 && currentPage > 1;
+    if (willBeEmpty) {
+      setCurrentPage(p => Math.max(1, p - 1));
+      // fetchArticles akan otomatis terpanggil oleh useEffect currentPage
+    } else {
+      // tetap di halaman ini tapi refetch biar meta/rows sinkron
+      fetchArticles();
+    }
   };
 
   const handleDelete = async (id: number) => {
@@ -105,19 +183,16 @@ export default function ArticlesPage() {
     try {
       await deleteArticleSvc(id);
       setToast({ show: true, msg: "Artikel berhasil dihapus", variant: "success" });
-      // hapus dari sumber data lokal
-      setAllRows(prev => prev.filter(a => a.id !== id));
-      // jika halaman jadi kosong, geser ke halaman sebelumnya
-      const after = filteredRows.length - 1;
-      const maxPage = Math.max(1, Math.ceil(after / itemsPerPage));
-      if (currentPage > maxPage) setCurrentPage(maxPage);
+
+      // hitung sisa item di halaman ini setelah delete
+      const remaining = rows.length - 1;
+      refetchAfterDeleteIfNeeded(remaining);
     } catch (e: any) {
       setToast({ show: true, msg: e?.message || "Gagal menghapus artikel", variant: "error" });
     }
   };
 
   const handleNewArticle = () => (window.location.href = "/articles/add");
-
   const handlePageChange = (p: number) => setCurrentPage(p);
   const handlePageSizeChange = (n: number) => {
     setItemsPerPage(n);
@@ -177,7 +252,7 @@ export default function ArticlesPage() {
                     className="w-56 rounded-lg border border-gray-300 pl-9 pr-3 py-2 text-sm placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                   />
                   <svg className="absolute left-3 top-2.5 h-4 w-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
                   </svg>
                 </div>
               </div>
@@ -202,7 +277,7 @@ export default function ArticlesPage() {
                       <div className="flex items-center gap-1">
                         <span>Title</span>
                         <svg className="h-4 w-4 text-gray-400" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-                          <path strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" d="M8 9l4-4 4 4M8 15l4 4 4-4"/>
+                          <path strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" d="M8 9l4-4 4 4M8 15l4 4 4-4" />
                         </svg>
                       </div>
                     </th>
@@ -210,7 +285,7 @@ export default function ArticlesPage() {
                       <div className="flex items-center gap-1">
                         <span>Author</span>
                         <svg className="h-4 w-4 text-gray-400" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-                          <path strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" d="M8 9l4-4 4 4M8 15l4 4 4-4"/>
+                          <path strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" d="M8 9l4-4 4 4M8 15l4 4 4-4" />
                         </svg>
                       </div>
                     </th>
@@ -219,7 +294,7 @@ export default function ArticlesPage() {
                       <div className="flex items-center gap-1">
                         <span>Published</span>
                         <svg className="h-4 w-4 text-gray-400" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-                          <path strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" d="M8 9l4-4 4 4M8 15l4 4 4-4"/>
+                          <path strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" d="M8 9l4-4 4 4M8 15l4 4 4-4" />
                         </svg>
                       </div>
                     </th>
@@ -240,25 +315,29 @@ export default function ArticlesPage() {
                         <td className="px-3 sm:px-6 py-4"><div className="h-6 w-20 rounded bg-gray-200" /></td>
                       </tr>
                     ))
-                  ) : pageRows.length === 0 ? (
+                  ) : rows.length === 0 ? (
                     <tr>
-                      <td colSpan={7} className="px-3 sm:px-6 py-10 text-center text-gray-500">Tidak ada artikel</td>
+                      <td colSpan={7} className="px-3 sm:px-6 py-10 text-center text-gray-500">
+                        Tidak ada artikel
+                      </td>
                     </tr>
                   ) : (
-                    pageRows.map(article => (
+                    rows.map(article => (
                       <tr key={article.id} className="hover:bg-gray-50">
-                        <td className="px-3 sm:px-6 py-4"><input type="checkbox" className="rounded border-gray-300" /></td>
                         <td className="px-3 sm:px-6 py-4">
-                          <div className="h-10 w-10 sm:h-12 sm:w-12 overflow-hidden rounded bg-gray-200">
-                            <img
-                              src={article.cover_url || "/api/placeholder/50/50"}
-                              alt="cover"
-                              className="h-full w-full object-cover"
-                              onError={e => {
-                                e.currentTarget.src =
-                                  "data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNDgiIGhlaWdodD0iNDgiIHZpZXdCb3g9IjAgMCA0OCA0OCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iNDgiIGhlaWdodD0iNDgiIGZpbGw9IiNGM0Y0RjYiLz48cGF0aCBkPSJNMjQgMzZDMzAuNjI3NCAzNiAzNiAzMC42Mjc0IDM2IDI0QzM2IDE3LjM3MjYgMzAuNjI3NCAxMiAyNCAxMkMxNy4zNzI2IDEyIDEyIDE3LjM3MjYgMTIgMjRDMTIgMzAuNjI3NiAxNy4zNzI2IDM2IDI0IDM2WiIgc3Ryb2tlPSIjOUNBM0FGIiBzdHJva2Utd2lkdGg9IjIiLz48cGF0aCBkPSJNMjQgMjhDMjYuMjA5MSAyOCAyOCAyNi4yMDkxIDI4IDI0QzI4IDIxLjc5MDkgMjYuMjA5MSAyMCAyNCAyMEMyMS43OTA5IDIwIDIwIDIxLjc5MDkgMjAgMjRDMjAgMjYuMjA5MSAyMS43OTA5IDI4IDI0IDI4WiIgc3Ryb2tlPSIjOUNBM0FGIiBzdHJva2Utd2lkdGg9IjIiLz48L3N2Zz4=";
-                              }}
-                            />
+                          <input type="checkbox" className="rounded border-gray-300" />
+                        </td>
+                        <td className="px-3 sm:px-6 py-4">
+                          <div className="relative h-10 w-10 sm:h-12 sm:w-12 overflow-hidden rounded bg-gray-200">
+                            {article.cover_url && (
+                              <Image
+                                src={article.cover_url}
+                                alt="cover"
+                                fill
+                                sizes="48px"
+                                style={{ objectFit: "cover" }}
+                              />
+                            )}
                           </div>
                         </td>
                         <td className="px-3 sm:px-6 py-4">
@@ -267,8 +346,17 @@ export default function ArticlesPage() {
                         <td className="hidden sm:table-cell px-3 sm:px-6 py-4">
                           <div className="text-sm text-gray-900">{article.author_name}</div>
                         </td>
-                        <td className="px-3 sm:px-6 py-4"><StatusBadge status={article.status as any} /></td>
-                        <td className="px-3 sm:px-6 py-4"><ToggleSwitch checked={!!article.published} onChange={() => handleTogglePublish(article.id)} /></td>
+                        <td className="px-3 sm:px-6 py-4">
+                          <StatusBadge status={article.status as any} />
+                        </td>
+                        <td className="px-3 sm:px-6 py-4">
+                          <ToggleSwitch
+                            checked={!!article.published}
+                            disabled={togglingIds.has(article.id)}
+                            aria-busy={togglingIds.has(article.id)}
+                            onChange={(_checked) => handleTogglePublish(article.id)}
+                          />
+                        </td>
                         <td className="px-3 sm:px-6 py-4">
                           <div className="flex items-center gap-3 sm:gap-4">
                             <EditButton onClick={() => handleEdit(article.id)} />
@@ -285,7 +373,7 @@ export default function ArticlesPage() {
             {/* Pagination */}
             <div className="border-t border-gray-200 px-4 py-3">
               <Pagination
-                totalItems={totalItems}
+                totalItems={meta.total}
                 page={currentPage}
                 pageSize={itemsPerPage}
                 onPageChange={handlePageChange}
@@ -297,7 +385,12 @@ export default function ArticlesPage() {
         </div>
       </div>
 
-      <Toast show={toast.show} message={toast.msg} variant={toast.variant} onClose={() => setToast({ show: false, msg: "" })} />
+      <Toast
+        show={toast.show}
+        message={toast.msg}
+        variant={toast.variant}
+        onClose={() => setToast({ show: false, msg: "" })}
+      />
     </div>
   );
 }

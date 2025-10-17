@@ -1,7 +1,7 @@
 export const runtime = "nodejs";
 
 import { NextRequest, NextResponse } from "next/server";
-import { ensureEnvOrThrow, makeApiUrl, readCookie } from "../_utils/backend";
+import { ensureEnvOrThrow, makeApiUrl, readCookie } from "../../_utils/backend";
 
 export async function GET(req: NextRequest) {
   try {

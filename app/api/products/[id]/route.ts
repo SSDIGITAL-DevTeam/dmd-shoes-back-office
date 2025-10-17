@@ -1,6 +1,6 @@
 // app/api/product/[id]/route.ts
 import { NextRequest } from "next/server";
-import { ensureEnvOrThrow, makeApiUrl } from "../../_utils/backend";
+import { ensureEnvOrThrow, makeApiUrl } from "../../../_utils/backend";
 
 /** Header anti-cache */
 const noStoreHeaders = {

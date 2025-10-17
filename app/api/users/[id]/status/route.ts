@@ -1,7 +1,7 @@
 export const runtime = "nodejs";
 
 import { NextResponse } from "next/server";
-import { ensureEnvOrThrow, makeApiUrl } from "../../../_utils/backend";
+import { ensureEnvOrThrow, makeApiUrl } from "../../../../_utils/backend";
 
 function readCookie(header: string | null, name: string) {
   if (!header) return undefined;

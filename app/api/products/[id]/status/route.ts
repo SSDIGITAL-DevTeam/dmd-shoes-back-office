@@ -1,7 +1,7 @@
 export const runtime = "nodejs";
 
 import { NextRequest, NextResponse } from "next/server";
-import { ensureEnvOrThrow, makeApiUrl, readCookie } from "../../../_utils/backend";
+import { ensureEnvOrThrow, makeApiUrl, readCookie } from "../../../../_utils/backend";
 
 /** PATCH /api/products/:id/status  →  Laravel contoh: PATCH /api/v1/products/:id/status */
 export async function PATCH(req: NextRequest, ctx: { params: { id: string } }) {

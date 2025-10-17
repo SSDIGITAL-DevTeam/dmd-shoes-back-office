@@ -1,6 +1,6 @@
 // app/api/category/route.ts
 import { NextRequest } from "next/server";
-import { ensureEnvOrThrow, makeApiUrl } from "../_utils/backend";
+import { ensureEnvOrThrow, makeApiUrl } from "../../_utils/backend";
 
 /** Header anti-cache untuk semua response proxy */
 const noStoreHeaders = {
