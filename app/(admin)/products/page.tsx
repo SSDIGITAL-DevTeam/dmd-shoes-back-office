@@ -29,7 +29,7 @@ function resolveBadgeStatus(input: unknown): BadgeStatus {
   if (input === true || input === 1 || input === "1") return "active";
   if (input === false || input === 0 || input === "0") return "non-active";
   const str = String(input ?? "").trim().toLowerCase();
-  if (str === "active") return "active";
+  if (str === "active" || str === "aktif") return "active";
   if (str === "inactive" || str === "non-active" || str === "non active")
     return "non-active";
   if (str === "publish") return "publish";
@@ -45,6 +45,7 @@ const STORAGE_BASE = (process.env.NEXT_PUBLIC_STORAGE_URL || "").replace(
   ""
 );
 const PLACEHOLDER = "/api/placeholder/50/50";
+
 const toImageUrl = (raw?: string | null) => {
   if (!raw) return PLACEHOLDER;
   if (/^https?:\/\//i.test(raw)) return raw;
@@ -64,15 +65,13 @@ function useDebounce<T>(value: T, delay = 400) {
 /** ======================
  *  Types kategori lokal
  *  ====================== */
-type LangText = { id?: string; en?: string } | string | null | undefined;
-
 type ApiCategory = {
   id: number;
   slug?: string;
   name?: { id?: string; en?: string } | string | null;
 };
 
-/** Helper nama kategori bilingual-safe */
+/** Helper nama kategori bilingual-safe (untuk daftar kategori global) */
 function toCategoryText(cat?: ApiCategory | null): string {
   if (!cat) return "-";
   const t =
@@ -81,6 +80,42 @@ function toCategoryText(cat?: ApiCategory | null): string {
     cat.slug ||
     `Category ${cat.id}`;
   return t || "-";
+}
+
+/** Helper nama kategori dari item produk:
+ *  1) `category_name` (presenter BE)
+ *  2) object/string `category` (atau `category_brief`)
+ *  3) `category_id` → lookup ke catMap
+ *  4) slug cadangan
+ */
+function categoryNameFromProduct(
+  item: any,
+  catMap: Record<number, string>
+): string {
+  // 1) langsung dari presenter
+  const direct = safeText(item?.category_name, currentLocale);
+  if (direct) return direct;
+
+  // 2) object/string category
+  if (item?.category) {
+    const asText =
+      safeText(item.category?.name ?? item.category, currentLocale) ||
+      (typeof item.category === "string" ? item.category : "");
+    if (asText) return asText;
+  }
+
+  // 3) lookup via id
+  const cid =
+    item?.category_id ?? item?.categoryId ?? item?.category_id_id ?? null;
+  if (cid && catMap[cid]) return catMap[cid];
+
+  // 4) category_brief atau slug terakhir
+  const brief =
+    safeText(item?.category_brief?.name, currentLocale) ||
+    item?.category_brief?.slug;
+  if (brief) return brief;
+
+  return item?.category_slug || "-";
 }
 
 /** ======================
@@ -106,14 +141,11 @@ export default function ProductsPage() {
   const [searchValue, setSearchValue] = useState<string>("");
   const debouncedSearch = useDebounce(searchValue, 500);
 
-  /** ─────────────────────────────────────────────
-   *  1) Load kategori sekali (status=all; per_page besar)
-   *  ───────────────────────────────────────────── */
+  /** 1) Load kategori sekali (status=all; per_page besar) */
   useEffect(() => {
     let mounted = true;
     (async () => {
       try {
-        // coba ambil semua kategori; backend kamu biasa pakai per_page
         const res = await api.get<{
           status?: string;
           data?: ApiCategory[];
@@ -129,7 +161,6 @@ export default function ProductsPage() {
         });
         setCatMap(map);
       } catch {
-        // abaikan error — fallback nanti pakai "-" / slug dari produk
         setCatMap({});
       }
     })();
@@ -138,9 +169,7 @@ export default function ProductsPage() {
     };
   }, []);
 
-  /** ─────────────────────────────────────────────
-   *  2) Ambil produk ACTIVE + INACTIVE → gabung → virtual paginate
-   *  ───────────────────────────────────────────── */
+  /** 2) Ambil produk ACTIVE + INACTIVE → gabung → virtual paginate */
   useEffect(() => {
     let mounted = true;
 
@@ -171,9 +200,7 @@ export default function ProductsPage() {
 
         const a = Array.isArray(resActive?.data) ? resActive.data : [];
         const b = Array.isArray(resInactive?.data) ? resInactive.data : [];
-
         const combined = [...a, ...b];
-        // optional sort: combined.sort((x: any, y: any) => Number(y.id) - Number(x.id));
 
         const totalActive = resActive?.meta?.total ?? a.length;
         const totalInactive = resInactive?.meta?.total ?? b.length;
@@ -215,9 +242,7 @@ export default function ProductsPage() {
 
   const totalItems = meta?.total ?? 0;
 
-  /** ─────────────────────────────────────────────
-   *  3) Map ke bentuk display (resolve kategori dari produk/Map)
-   *  ───────────────────────────────────────────── */
+  /** 3) Map ke bentuk display (resolve kategori: category_name → category → map → brief/slug) */
   type DisplayProduct = {
     id: number | string;
     nameText: string;
@@ -228,56 +253,35 @@ export default function ProductsPage() {
   };
 
   const displayProducts = useMemo<DisplayProduct[]>(() => {
-    return rows.map((item) => {
+    return rows.map((item: any) => {
       const nameText =
-        safeText((item as any).name, currentLocale) ||
-        safeText((item as any).title, currentLocale) ||
-        `${(item as any).slug ?? (item as any).id}`;
+        item?.name_text ||
+        safeText(item?.name, currentLocale) ||
+        safeText(item?.title, currentLocale) ||
+        `${item?.slug ?? item?.id}`;
 
-      // ① kalau response produk sudah menyertakan objek category → pakai itu
-      let categoryText =
-        safeText((item as any).category, currentLocale) ||
-        (typeof (item as any).category === "string"
-          ? (item as any).category
-          : "");
+      // brand bisa string / { name: {id,en} }
+      const brandText =
+        safeText(item?.brand?.name ?? item?.brand, currentLocale) || "-";
 
-      // ② kalau belum ada, cek category_id dan map kategori hasil fetch
-      const cid =
-        (item as any).category_id ??
-        (item as any).categoryId ??
-        (item as any).category_id_id; // jaga-jaga variasi
-      if ((!categoryText || categoryText === "-") && cid && catMap[cid]) {
-        categoryText = catMap[cid];
-      }
-
-      // ③ fallback terakhir: coba "category_brief" / "parent_brief"
-      if (!categoryText || categoryText === "-") {
-        categoryText =
-          safeText((item as any).category_brief?.name, currentLocale) ||
-          (item as any).category_brief?.slug ||
-          "-";
-      }
-
-      const brandText = safeText((item as any).brand, currentLocale) || "-";
-
-      const rawStatus =
-        (item as any).status ??
-        (item as any).published ??
-        (item as any).is_active;
-      const badge = resolveBadgeStatus(rawStatus);
+      const badge = resolveBadgeStatus(
+        item?.status ?? item?.published ?? item?.is_active
+      );
 
       const coverUrl = toImageUrl(
-        (item as any).cover_url ??
-          (item as any).image_url ??
-          (item as any).thumbnail_url ??
-          (item as any).cover ??
+        item?.cover_url ??
+          item?.image_url ??
+          item?.thumbnail_url ??
+          item?.cover ??
           null
       );
 
+      const categoryText = categoryNameFromProduct(item, catMap);
+
       return {
-        id: (item as any).id,
+        id: item?.id,
         nameText,
-        categoryText: categoryText || "-",
+        categoryText,
         brandText,
         badge,
         coverUrl,
@@ -499,7 +503,7 @@ export default function ProductsPage() {
 
                           <td className="whitespace-nowrap px-3 py-4 sm:px-6">
                             <div className="flex items-center gap-3 sm:gap-4">
-                              <EditButton onClick={() => router.push(`/products/edit/${p.id}`)} />
+                              <EditButton onClick={() => handleEdit(p.id)} />
                               <DeleteButton onClick={() => handleDelete(p.id)} />
                             </div>
                           </td>

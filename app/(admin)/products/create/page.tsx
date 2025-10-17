@@ -1,3 +1,4 @@
+// app/(admin)/products/create/page.tsx
 "use client";
 
 import React, { useEffect, useMemo, useState, useCallback } from "react";
@@ -11,7 +12,7 @@ import ProductGallery from "./_components/ProductGallery";
 
 interface Gallery {
   id: number;
-  image: string; // preview
+  image: string;      // preview
   fileName: string;
   title: string;
   alt: string;
@@ -51,30 +52,32 @@ export default function CreateProductPage() {
     keyword: "",
     seoDescription: "",
     featured: false,
-    status: true, // toggle UI → dipetakan ke 'publish'/'draft' saat submit
+    status: true, // toggle UI -> di-serialize jadi boolean (JSON) atau "true"/"false" (multipart)
     heel_height_cm: "",
   });
 
   const [galleries, setGalleries] = useState<Gallery[]>([]);
   const [variants, setVariants] = useState<Variant[]>([]);
-
   const [pricingType, setPricingType] = useState<"single" | "individual">("single");
 
-  // ── harga per 1 dimensi (group)
+  // harga per 1 dimensi (group)
   const [groupPrices, setGroupPrices] = useState<{ [group: string]: string }>({});
-
-  // ── harga per kombinasi (≥2 dimensi)
-  const [individualPrices, setIndividualPrices] = useState<{ [key: string]: string; }>({});
-
+  // harga per kombinasi (≥2 dimensi)
+  const [individualPrices, setIndividualPrices] = useState<{ [key: string]: string }>({});
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({});
   const [openSubGroups, setOpenSubGroups] = useState<Record<string, Record<string, boolean>>>({});
 
   const isGroupOpen = (first: string) => openGroups[first] !== false; // undefined => open
-  const toggleGroup = (first: string) => setOpenGroups((prev) => ({ ...prev, [first]: !isGroupOpen(first) }));
+  const toggleGroup = (first: string) =>
+    setOpenGroups((prev) => ({ ...prev, [first]: !isGroupOpen(first) }));
 
-  const isSubOpen = (first: string, second: string) => openSubGroups[first]?.[second] ?? true;
+  const isSubOpen = (first: string, second: string) =>
+    openSubGroups[first]?.[second] ?? true;
   const toggleSub = (first: string, second: string) =>
-    setOpenSubGroups((prev) => ({ ...prev, [first]: { ...(prev[first] || {}), [second]: !isSubOpen(first, second) } }));
+    setOpenSubGroups((prev) => ({
+      ...prev,
+      [first]: { ...(prev[first] || {}), [second]: !isSubOpen(first, second) },
+    }));
 
   const handleInputChange = (
     e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>
@@ -93,6 +96,9 @@ export default function CreateProductPage() {
     return Number.isFinite(numeric) ? numeric : null;
   };
 
+  // ==============================
+  // CREATE (POST) PRODUCT
+  // ==============================
   const handleCreate = async () => {
     setErrorMessage(null);
     setSuccessMessage(null);
@@ -113,14 +119,30 @@ export default function CreateProductPage() {
 
     const pricingMode = pricingType === "single" ? "single" : "per_variant";
     const rootPriceValue = parseNumber(formData.price);
-
     if (pricingMode === "single" && rootPriceValue == null) {
       errors.push("Harga produk wajib diisi.");
     }
 
-    const validVariants = getValidVariants();
-    const variantCombinations = generateVariantCombinations();
+    const validVariants = variants.filter((v) =>
+      v.options.some((o) => (o.id || o.en).trim() !== "")
+    );
 
+    // varian combinations (sekadar validasi)
+    const generateVariantCombinations = () => {
+      if (validVariants.length === 0) return [];
+      let combos: string[][] = [[]];
+      validVariants.forEach((variant) => {
+        const opts = variant.options
+          .filter((o) => (o.id || o.en).trim() !== "")
+          .map((o) => (language === "id" ? o.id || o.en : o.en || o.id));
+        const next: string[][] = [];
+        combos.forEach((c) => opts.forEach((o) => next.push([...c, o])));
+        combos = next;
+      });
+      return combos;
+    };
+
+    const variantCombinations = generateVariantCombinations();
     if (pricingMode === "per_variant" && validVariants.length > 0 && variantCombinations.length === 0) {
       errors.push("Lengkapi opsi varian sebelum menyimpan.");
     }
@@ -132,55 +154,148 @@ export default function CreateProductPage() {
 
     setSubmitting(true);
 
-    try {
-      // ── 1️⃣ Siapkan FormData sesuai backend
-      const fd = new FormData();
-
-      // status backend: kirim 'publish' / 'draft' (bukan boolean)
-      fd.append("status", formData.status ? "publish" : "draft");
-      fd.append("featured", formData.featured ? "1" : "0");
-      fd.append("category_id", String(categoryId));
-      fd.append("pricing_mode", pricingMode);
-
-      // bilingual name & description
-      fd.append("name[id]", name_id);
-      fd.append("name[en]", name_en);
-      fd.append("description[id]", description_id);
-      fd.append("description[en]", description_en);
-      fd.append("slug", slug);
-      fd.append("heel_height_cm", formData.heel_height_cm || "0");
-
-      // ── 2️⃣ SEO (mengikuti penamaan backend: seo_tags[], seo_keyword[lang], seo_description[lang])
-      const seoTags = formData.tags
-        .split(/[,\n]/)
-        .map((t) => t.trim())
-        .filter(Boolean);
-      seoTags.forEach((tag, i) => fd.append(`seo_tags[${i}]`, tag));
-
-      const keyword_id = (formData as any).keyword_id?.trim() || "";
-      const keyword_en = (formData as any).keyword_en?.trim() || "";
-      const seoDesc_id = (formData as any).seoDescription_id?.trim() || "";
-      const seoDesc_en = (formData as any).seoDescription_en?.trim() || "";
-      if (keyword_id) fd.append("seo_keyword[id]", keyword_id);
-      if (keyword_en) fd.append("seo_keyword[en]", keyword_en);
-      if (seoDesc_id) fd.append("seo_description[id]", seoDesc_id);
-      if (seoDesc_en) fd.append("seo_description[en]", seoDesc_en);
-
-      // ── 3️⃣ Harga Single
-      if (pricingMode === "single" && rootPriceValue != null) {
-        fd.append("price", String(rootPriceValue));
-      }
-
-      // ── 4️⃣ Attributes (varian) → name[id|en], options[][id|en]
-      const attributes = getValidVariants().map((variant, index) => ({
+    // helpers builder
+    const buildAttributes = () =>
+      validVariants.map((variant, index) => ({
         name: {
           id: variant.name.id || variant.name.en || `Variant ${index + 1}`,
-        en: variant.name.en || variant.name.id || `Variant ${index + 1}`,
+          en: variant.name.en || variant.name.id || `Variant ${index + 1}`,
         },
         options: variant.options
           .filter((o) => (o.id || o.en).trim() !== "")
           .map((o) => ({ id: o.id || o.en, en: o.en || o.id })),
       }));
+
+    const buildVariantPrices = () => {
+      type VPrice = {
+        labels: { id: string; en: string }[];
+        price: number;
+        stock: number;
+        active: boolean;
+        size_eu?: number;
+      };
+
+      // LangText combos
+      let combos: { id: string; en: string }[][] = [[]];
+      validVariants.forEach((v) => {
+        const opts = v.options
+          .filter((o) => (o.id || o.en).trim() !== "")
+          .map((o) => ({ id: o.id || o.en, en: o.en || o.id }));
+        const next: { id: string; en: string }[][] = [];
+        combos.forEach((c) => opts.forEach((o) => next.push([...c, o])));
+        combos = next;
+      });
+
+      const result: VPrice[] = [];
+
+      if (validVariants.length === 1) {
+        combos.forEach((combination) => {
+          const opt = combination[0];
+          const displayFirst = opt.en || opt.id;
+          const priceValue =
+            groupPrices[displayFirst] === "" ? null : Number(groupPrices[displayFirst]);
+          if (priceValue != null && Number.isFinite(priceValue)) {
+            const v0 = validVariants[0];
+            const label = {
+              id: `${v0.name.id || v0.name.en}: ${opt.id || opt.en}`,
+              en: `${v0.name.en || v0.name.id}: ${opt.en || opt.id}`,
+            };
+            const vp: VPrice = { labels: [label], price: priceValue, stock: 0, active: true };
+            const numericSize = Number(opt.en || opt.id);
+            if (!Number.isNaN(numericSize)) vp.size_eu = numericSize;
+            result.push(vp);
+          }
+        });
+      } else if (validVariants.length >= 2) {
+        combos.forEach((combination) => {
+          const enKey = combination.map((o) => o.en || o.id).join("-");
+          const priceValue =
+            individualPrices[enKey] === "" ? null : Number(individualPrices[enKey]);
+          if (priceValue != null && Number.isFinite(priceValue)) {
+            const labels = combination.map((opt, idx) => {
+              const v = validVariants[idx];
+              return {
+                id: `${v.name.id || v.name.en}: ${opt.id || opt.en}`,
+                en: `${v.name.en || v.name.id}: ${opt.en || opt.id}`,
+              };
+            });
+            result.push({ labels, price: priceValue, stock: 0, active: true });
+          }
+        });
+      }
+
+      return result;
+    };
+
+    try {
+      // SEO
+      const seoTags = formData.tags
+        .split(/[,\n]/)
+        .map((t) => t.trim())
+        .filter(Boolean);
+      const keyword_id = (formData as any).keyword_id?.trim() || "";
+      const keyword_en = (formData as any).keyword_en?.trim() || "";
+      const seoDesc_id = (formData as any).seoDescription_id?.trim() || "";
+      const seoDesc_en = (formData as any).seoDescription_en?.trim() || "";
+
+      const hasFiles = galleries.some((g) => g.file);
+
+      if (!hasFiles) {
+        // ===== JSON PATH (boolean asli) =====
+        const payload: any = {
+          status: !!formData.status,
+          featured: !!formData.featured,
+          category_id: Number(categoryId),
+          pricing_mode: pricingMode,
+          name: { id: name_id, en: name_en },
+          description: { id: description_id, en: description_en },
+          slug,
+          heel_height_cm: Number(formData.heel_height_cm || 0),
+          seo_tags: seoTags,
+          seo_keyword: { id: keyword_id, en: keyword_en },
+          seo_description: { id: seoDesc_id, en: seoDesc_en },
+        };
+        if (pricingMode === "single" && rootPriceValue != null) payload.price = rootPriceValue;
+
+        const attributes = buildAttributes();
+        if (attributes.length) payload.attributes = attributes;
+
+        if (pricingMode === "per_variant" && attributes.length) {
+          const variant_prices = buildVariantPrices();
+          if (variant_prices.length) payload.variant_prices = variant_prices;
+        }
+
+        const res = await api.post(`/products`, JSON.stringify(payload), {
+          headers: { "Content-Type": "application/json" },
+        });
+
+        setSuccessMessage(res.data?.message || "Produk berhasil dibuat.");
+        setTimeout(() => router.push("/products"), 800);
+        return;
+      }
+
+      // ===== MULTIPART PATH (ada file) =====
+      const fd = new FormData();
+      // kirim sebagai string "true"/"false" untuk aman di validator boolean backend
+      fd.append("status", String(!!formData.status));
+      fd.append("featured", String(!!formData.featured));
+      fd.append("category_id", String(categoryId));
+      fd.append("pricing_mode", pricingMode);
+      fd.append("name[id]", name_id);
+      fd.append("name[en]", name_en);
+      fd.append("description[id]", description_id);
+      fd.append("description[en]", description_en);
+      fd.append("slug", slug);
+      fd.append("heel_height_cm", String(Number(formData.heel_height_cm || 0)));
+      seoTags.forEach((tag, i) => fd.append(`seo_tags[${i}]`, tag));
+      if (keyword_id) fd.append("seo_keyword[id]", keyword_id);
+      if (keyword_en) fd.append("seo_keyword[en]", keyword_en);
+      if (seoDesc_id) fd.append("seo_description[id]", seoDesc_id);
+      if (seoDesc_en) fd.append("seo_description[en]", seoDesc_en);
+      if (pricingMode === "single" && rootPriceValue != null) {
+        fd.append("price", String(rootPriceValue));
+      }
+      const attributes = buildAttributes();
       attributes.forEach((attr, i) => {
         fd.append(`attributes[${i}][name][id]`, attr.name.id);
         fd.append(`attributes[${i}][name][en]`, attr.name.en);
@@ -189,74 +304,9 @@ export default function CreateProductPage() {
           fd.append(`attributes[${i}][options][${j}][en]`, opt.en);
         });
       });
-
-      // ── 5️⃣ Harga varian (per_variant) → variant_prices[][labels][i][id|en], price, stock, active, (size_eu opsional)
-      if (pricingMode === "per_variant" && variantCombinations.length > 0) {
-        type VPrice = {
-          labels: { id: string; en: string }[];
-          price: number;
-          stock: number;
-          active: boolean;
-          size_eu?: number;
-        };
-
-        const valid = getValidVariants();
-
-        // Build combinations of option objects untuk label bilingual
-        const optionCombos: LangText[][] = (() => {
-          if (valid.length === 0) return [];
-          let combos: LangText[][] = [[]];
-          valid.forEach((v) => {
-            const opts = v.options.filter((o) => (o.id || o.en).trim() !== "");
-            const next: LangText[][] = [];
-            combos.forEach((c) => opts.forEach((o) => next.push([...c, o])));
-            combos = next;
-          });
-          return combos;
-        })();
-
-        const variantPricesPayload: VPrice[] = [];
-
-        if (valid.length === 1) {
-          // Single dimension pricing by group
-          optionCombos.forEach((combination) => {
-            const opt = combination[0];
-            const displayFirst = opt.en || opt.id;
-            const priceValue = parseNumber(groupPrices[displayFirst]);
-            if (priceValue != null) {
-              const v0 = valid[0];
-              const label: { id: string; en: string } = {
-                id: `${v0.name.id || v0.name.en}: ${opt.id || opt.en}`,
-                en: `${v0.name.en || v0.name.id}: ${opt.en || opt.id}`,
-              };
-
-              const payload: VPrice = { labels: [label], price: priceValue, stock: 0, active: true };
-
-              const numericSize = Number(opt.en || opt.id);
-              if (!Number.isNaN(numericSize)) payload.size_eu = numericSize;
-
-              variantPricesPayload.push(payload);
-            }
-          });
-        } else {
-          // Two or more dimensions
-          optionCombos.forEach((combination) => {
-            const enKey = combination.map((o) => o.en || o.id).join("-");
-            const priceValue = parseNumber(individualPrices[enKey]);
-            if (priceValue != null) {
-              const labels = combination.map((opt, idx) => {
-                const v = valid[idx];
-                return {
-                  id: `${v.name.id || v.name.en}: ${opt.id || opt.en}`,
-                  en: `${v.name.en || v.name.id}: ${opt.en || opt.id}`,
-                };
-              });
-              variantPricesPayload.push({ labels, price: priceValue, stock: 0, active: true });
-            }
-          });
-        }
-
-        variantPricesPayload.forEach((vp, i) => {
+      if (pricingMode === "per_variant" && attributes.length) {
+        const vps = buildVariantPrices();
+        vps.forEach((vp, i) => {
           vp.labels.forEach((label, j) => {
             fd.append(`variant_prices[${i}][labels][${j}][id]`, label.id);
             fd.append(`variant_prices[${i}][labels][${j}][en]`, label.en);
@@ -267,8 +317,6 @@ export default function CreateProductPage() {
           if (vp.size_eu != null) fd.append(`variant_prices[${i}][size_eu]`, String(vp.size_eu));
         });
       }
-
-      // ── 6️⃣ Gallery (file upload)
       galleries.forEach((g, i) => {
         if (g.file) fd.append(`gallery[${i}][image]`, g.file);
         if (g.title) fd.append(`gallery[${i}][title]`, g.title);
@@ -276,18 +324,16 @@ export default function CreateProductPage() {
         fd.append(`gallery[${i}][sort]`, String(i));
       });
 
-      // ── 7️⃣ Kirim
-      // Mengikuti setup proyek: api (axios) sudah handle baseURL & credentials
       const res = await api.post(`/products`, fd as any);
       setSuccessMessage(res.data?.message || "Produk berhasil dibuat.");
-      setErrorMessage(null);
-
-      setTimeout(() => { router.push("/products"); }, 800);
+      setTimeout(() => router.push("/products"), 800);
     } catch (err: any) {
       console.error("Gagal membuat produk:", err);
       const response = err?.response?.data;
       if (response?.errors) {
-        const messages = Object.values(response.errors).flat().map((msg: unknown) => String(msg));
+        const messages = Object.values(response.errors)
+          .flat()
+          .map((m: unknown) => String(m));
         setErrorMessage(messages.length ? messages.join(", ") : response.message || "Gagal membuat produk.");
       } else {
         const errorMsg =
@@ -304,31 +350,33 @@ export default function CreateProductPage() {
     }
   };
 
-  const handleCancel = () => { router.push("/products"); };
+  // === SEO/Status toggles ===
+  const handleCancel = () => router.push("/products");
+  const handleToggleStatus = () => setFormData((p) => ({ ...p, status: !p.status }));
 
-  const handleToggleStatus = () => {
-    setFormData((prev) => ({ ...prev, status: !prev.status }));
-  };
-
+  // === Gallery handlers ===
   const handleGalleryChange = (id: number, field: string, value: string) => {
     setGalleries((prev) => prev.map((g) => (g.id === id ? { ...g, [field]: value } : g)));
   };
-
   const handleRemoveGallery = (id: number) => {
     setGalleries((prev) => prev.filter((g) => g.id !== id));
   };
-
   const handleAddGallery = () => {
-    const newGallery = { id: galleries.length + 1, image: "", title: "", alt: "", fileName: "file_name.jpg" };
+    const newGallery: Gallery = {
+      id: galleries.length + 1,
+      image: "",
+      title: "",
+      alt: "",
+      fileName: "file_name.jpg",
+    };
     setGalleries((prev) => [...prev, newGallery]);
   };
 
-  // === PERBAIKAN ENDPOINT SESUAI BACKEND PROYEK ===
-  // Kategori → /category (bukan /categories), pakai perPage
+  // === Load Category options (top level/active) ===
   const loadCategoryOptions = useCallback(async (inputValue: string) => {
     try {
       const res = await api.get<{ status: string; data: any[] }>(`/category`, {
-        params: { status: "active", perPage: 100, search: inputValue },
+        params: { status: "active", perPage: 100, search: inputValue, parent: "top" },
       });
       const list = (res as any)?.data?.data || (res as any)?.data || [];
       return list.map((cat: any) => ({
@@ -344,8 +392,9 @@ export default function CreateProductPage() {
     }
   }, []);
 
-  // Produk promo → /products, pakai perPage
-  const [promotionProduct, setPromotionProduct] = useState<{ value: number; label: string } | null>(null);
+  // Produk promosi (opsional)
+  const [promotionProduct, setPromotionProduct] =
+    useState<{ value: number; label: string } | null>(null);
   const loadPromotionOptions = useCallback(async (inputValue: string) => {
     try {
       const res = await api.get<{ status: string; data: any[] }>(`/products`, {
@@ -365,27 +414,35 @@ export default function CreateProductPage() {
     }
   }, []);
 
-  // saat pilih promo, kirimkan ke payload (opsional)
-  useEffect(() => {
-    // tidak disimpan di formData agar layout tetap; injeksi saat submit:
-    // ditangani di handleCreate → fd.append("promotion_product_id", ...)
-  }, [promotionProduct]);
-
+  // === Variant helpers ===
   const handleAddVariant = () => {
     if (variants.length >= 3) return;
-    const newVariant: Variant = { id: variants.length + 1, name: { id: "", en: "" }, options: [{ id: "", en: "" }] };
+    const newVariant: Variant = {
+      id: variants.length + 1,
+      name: { id: "", en: "" },
+      options: [{ id: "", en: "" }],
+    };
     setVariants((prev) => [...prev, newVariant]);
   };
 
   const handleVariantNameChange = (id: number, value: string, lang: "id" | "en") => {
-    setVariants((prev) => prev.map((v) => (v.id === id ? { ...v, name: { ...v.name, [lang]: value } } : v)));
+    setVariants((prev) =>
+      prev.map((v) => (v.id === id ? { ...v, name: { ...v.name, [lang]: value } } : v))
+    );
   };
 
-  const handleOptionChange = (variantId: number, optionIndex: number, value: string, lang: "id" | "en") => {
+  const handleOptionChange = (
+    variantId: number,
+    optionIndex: number,
+    value: string,
+    lang: "id" | "en"
+  ) => {
     setVariants((prev) =>
       prev.map((variant) => {
         if (variant.id !== variantId) return variant;
-        const newOptions = variant.options.map((o, i) => (i === optionIndex ? { ...o, [lang]: value } : o));
+        const newOptions = variant.options.map((o, i) =>
+          i === optionIndex ? { ...o, [lang]: value } : o
+        );
         const hasEmpty = newOptions.some((opt) => (opt.id || opt.en).trim() === "");
         const finalOptions = hasEmpty ? newOptions : [...newOptions, { id: "", en: "" }];
         return { ...variant, options: finalOptions };
@@ -398,7 +455,9 @@ export default function CreateProductPage() {
       prev.map((variant) => {
         if (variant.id !== variantId) return variant;
         const newOptions = variant.options.filter((_, i) => i !== optionIndex);
-        if (!newOptions.some((opt) => (opt.id || opt.en).trim() === "")) newOptions.push({ id: "", en: "" });
+        if (!newOptions.some((opt) => (opt.id || opt.en).trim() === "")) {
+          newOptions.push({ id: "", en: "" });
+        }
         return { ...variant, options: newOptions };
       })
     );
@@ -412,37 +471,34 @@ export default function CreateProductPage() {
     setIndividualPrices((prev) => ({ ...prev, [key]: price }));
   };
 
-  // ── Helpers untuk varian valid
   const getValidVariants = useMemo(
-    () => () => variants.filter((v) => v.options.some((opt) => (opt.id || opt.en).trim() !== "")),
+    () => () =>
+      variants.filter((v) => v.options.some((opt) => (opt.id || opt.en).trim() !== "")),
     [variants]
   );
-
   const validVariantCount = getValidVariants().length;
 
-  // ── Bersihkan harga per-kelompok ketika jumlah dimensi varian ≠ 1
+  // Reset group prices saat dimensi ≠ 1
   useEffect(() => {
     if (validVariantCount !== 1 && Object.keys(groupPrices).length > 0) {
       setGroupPrices({});
     }
   }, [validVariantCount]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ── Kombinasi varian
+  // Kombinasi varian (string)
   const generateVariantCombinations = () => {
-    const validVariants = getValidVariants();
-    if (validVariants.length === 0) return [];
-
-    const combinations: string[][] = [[]];
-    validVariants.forEach((variant) => {
+    const valid = getValidVariants();
+    if (valid.length === 0) return [];
+    let combos: string[][] = [[]];
+    valid.forEach((variant) => {
       const opts = variant.options
         .filter((o) => (o.id || o.en).trim() !== "")
         .map((o) => (language === "id" ? o.id || o.en : o.en || o.id));
       const next: string[][] = [];
-      combinations.forEach((c) => opts.forEach((o) => next.push([...c, o])));
-      combinations.length = 0;
-      combinations.push(...next);
+      combos.forEach((c) => opts.forEach((o) => next.push([...c, o])));
+      combos = next;
     });
-    return combinations;
+    return combos;
   };
 
   // Kelompokkan berdasarkan opsi pertama
@@ -454,20 +510,6 @@ export default function CreateProductPage() {
       grouped[first].push(comb);
     });
     return grouped;
-  };
-
-  // Tambahkan promotion_product_id saat submit (tanpa mengganggu layout/form state)
-  const appendPromotionProductIfAny = (fd: FormData) => {
-    if (promotionProduct?.value) fd.append("promotion_product_id", String(promotionProduct.value));
-  };
-
-  // Inject ke handleCreate (override agar tetap satu pintu)
-  const _origHandleCreate = handleCreate;
-  const handleCreateWithPromo = async () => {
-    // trick kecil: panggil builder & tambahkan field promo sebelum post
-    // karena handleCreate sudah membentuk FormData di dalam, kita copy logikanya langsung di atas.
-    // Untuk menjaga layout (tanpa refactor besar), panggil ulang handleCreate tapi intercept di api.interceptors jika perlu.
-    await _origHandleCreate();
   };
 
   return (
@@ -515,6 +557,7 @@ export default function CreateProductPage() {
               {successMessage}
             </div>
           )}
+
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
             {/* Left */}
             <div className="lg:col-span-2 space-y-6">
@@ -524,12 +567,11 @@ export default function CreateProductPage() {
 
                 {/* Name */}
                 <div className="mb-6">
-                  <label htmlFor="name" className="block text-sm font-medium text-gray-700 mb-2">
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
                     Name <span className="text-red-500">*</span>
                   </label>
-
                   {(["id", "en"] as const).map((langKey) => (
-                    <div key={langKey} className={`${language !== langKey ? "hidden" : "block"}`}>
+                    <div key={langKey} className={language !== langKey ? "hidden" : "block"}>
                       <input
                         type="text"
                         name={`name_${langKey}`}
@@ -568,7 +610,7 @@ export default function CreateProductPage() {
                   </div>
                 </div>
 
-                {/* Status (Active / Inactive) */}
+                {/* Status */}
                 <div className="mb-6">
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-3">
@@ -590,16 +632,19 @@ export default function CreateProductPage() {
 
                 {/* Description */}
                 <div className="mb-6">
-                  <label htmlFor="description" className="block text-sm font-medium text-gray-700 mb-2">
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
                     Description <span className="text-red-500">*</span>
                   </label>
                   {(["id", "en"] as const).map((langKey) => (
-                    <div key={langKey} className={`${language !== langKey ? "hidden" : "block"}`}>
+                    <div key={langKey} className={language !== langKey ? "hidden" : "block"}>
                       <textarea
                         name={`description_${langKey}`}
                         value={(formData as any)[`description_${langKey}`] || ""}
                         onChange={(e) =>
-                          setFormData((prev) => ({ ...prev, [`description_${langKey}`]: e.target.value }))
+                          setFormData((prev) => ({
+                            ...prev,
+                            [`description_${langKey}`]: e.target.value,
+                          }))
                         }
                         rows={8}
                         className="w-full px-3 py-2 border border-gray-300 border-t-0 rounded-b-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm text-black resize-none"
@@ -611,7 +656,7 @@ export default function CreateProductPage() {
 
                 {/* Category */}
                 <div className="mb-6">
-                  <label htmlFor="category" className="block text-sm font-medium text-gray-700 mb-2">
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
                     Category <span className="text-red-500">*</span>
                   </label>
                   <AsyncSelect
@@ -669,7 +714,7 @@ export default function CreateProductPage() {
                   />
                 </div>
 
-                {/* Heel Height (cm) */}
+                {/* Heel Height */}
                 <div className="mb-6">
                   <label htmlFor="heel_height_cm" className="block text-sm font-medium text-gray-700 mb-2">
                     Heel Height (cm)
@@ -687,6 +732,7 @@ export default function CreateProductPage() {
                 </div>
               </div>
 
+              {/* Gallery */}
               <ProductGallery
                 galleries={galleries}
                 onAddGallery={handleAddGallery}
@@ -718,7 +764,9 @@ export default function CreateProductPage() {
                     <div key={variant.id} className="border border-gray-200 rounded-lg p-4 bg-gray-50">
                       <div className="flex items-center justify-between mb-4">
                         <div className="flex items-center gap-3">
-                          <span className="text-sm font-medium text-gray-700">Variant {variantIndex + 1}</span>
+                          <span className="text-sm font-medium text-gray-700">
+                            Variant {variantIndex + 1}
+                          </span>
                           <input
                             type="text"
                             value={language === "id" ? variant.name.id || "" : variant.name.en || ""}
@@ -727,13 +775,12 @@ export default function CreateProductPage() {
                             placeholder={language === "id" ? "Nama varian (Indonesia)" : "Variant name (English)"}
                           />
                         </div>
-                        <button
-                          type="button"
+                        {/* Hapus variant */}
+                        <DeleteIcon
+                          label=""
                           onClick={() => handleRemoveVariant(variant.id)}
                           className="text-gray-400 hover:text-red-600 text-lg"
-                        >
-                          ×
-                        </button>
+                        />
                       </div>
 
                       <div className="space-y-2">
@@ -744,23 +791,27 @@ export default function CreateProductPage() {
                               <input
                                 type="text"
                                 value={language === "id" ? option.id || "" : option.en || ""}
-                                onChange={(e) => handleOptionChange(variant.id, optionIndex, e.target.value, language)}
+                                onChange={(e) =>
+                                  handleOptionChange(variant.id, optionIndex, e.target.value, language)
+                                }
                                 className="px-3 py-1 border border-gray-300 rounded text-sm text-black bg-white w-24"
                                 placeholder={
                                   optionIndex === variant.options.length - 1
-                                    ? language === "id" ? "Isi di sini" : "Input here"
+                                    ? language === "id"
+                                      ? "Isi di sini"
+                                      : "Input here"
                                     : "Option"
                                 }
                               />
-                              {variant.options.length > 1 && (option.id || option.en).trim() !== "" && (
-                                <button
-                                  type="button"
-                                  onClick={() => handleRemoveOption(variant.id, optionIndex)}
-                                  className="text-red-500 hover:text-red-700 text-sm w-4 h-4 flex items-center justify-center"
-                                >
-                                  <DeleteIcon label="" onClick={() => handleRemoveOption(variant.id, optionIndex)} className="w-4 h-4" />
-                                </button>
-                              )}
+                              {variant.options.length > 1 &&
+                                (option.id || option.en).trim() !== "" && (
+                                  // ⛔️ Tidak ada wrapper <button> di sekitar DeleteIcon (hindari nested button)
+                                  <DeleteIcon
+                                    label=""
+                                    onClick={() => handleRemoveOption(variant.id, optionIndex)}
+                                    className="text-red-500 hover:text-red-700 w-4 h-4"
+                                  />
+                                )}
                             </div>
                           ))}
                         </div>
@@ -785,10 +836,14 @@ export default function CreateProductPage() {
                             name="pricingType"
                             value="single"
                             checked={pricingType === "single"}
-                            onChange={(e) => setPricingType(e.target.value as "single" | "individual")}
+                            onChange={(e) =>
+                              setPricingType(e.target.value as "single" | "individual")
+                            }
                             className="text-blue-600"
                           />
-                          <span className="text-sm text-gray-700">Single Price for All Variant</span>
+                          <span className="text-sm text-gray-700">
+                            Single Price for All Variant
+                          </span>
                         </label>
 
                         <label className="flex items-center gap-3">
@@ -797,7 +852,9 @@ export default function CreateProductPage() {
                             name="pricingType"
                             value="individual"
                             checked={pricingType === "individual"}
-                            onChange={(e) => setPricingType(e.target.value as "single" | "individual")}
+                            onChange={(e) =>
+                              setPricingType(e.target.value as "single" | "individual")
+                            }
                             className="text-blue-600"
                           />
                           <span className="text-sm text-gray-700">Set Individual Prices</span>
@@ -818,8 +875,20 @@ export default function CreateProductPage() {
                                 className="text-gray-400 hover:text-gray-600"
                                 aria-label={`Toggle ${firstOption}`}
                               >
-                                <svg className={`w-4 h-4 transition-transform ${isGroupOpen(firstOption) ? "" : "rotate-180"}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                                <svg
+                                  className={`w-4 h-4 transition-transform ${
+                                    isGroupOpen(firstOption) ? "" : "rotate-180"
+                                  }`}
+                                  fill="none"
+                                  stroke="currentColor"
+                                  viewBox="0 0 24 24"
+                                >
+                                  <path
+                                    strokeLinecap="round"
+                                    strokeLinejoin="round"
+                                    strokeWidth={2}
+                                    d="M19 9l-7 7-7-7"
+                                  />
                                 </svg>
                               </button>
                             </div>
@@ -831,7 +900,12 @@ export default function CreateProductPage() {
                                   <input
                                     type="number"
                                     value={groupPrices[firstOption] ?? ""}
-                                    onChange={(e) => setGroupPrices((prev) => ({ ...prev, [firstOption]: e.target.value }))}
+                                    onChange={(e) =>
+                                      setGroupPrices((prev) => ({
+                                        ...prev,
+                                        [firstOption]: e.target.value,
+                                      }))
+                                    }
                                     className="px-2 py-1 border border-gray-300 rounded text-sm text-black w-32"
                                     placeholder="0"
                                     min={0}
@@ -847,80 +921,122 @@ export default function CreateProductPage() {
                     {/* Harga per KOMBINASI (≥2 dimensi) */}
                     {pricingType === "individual" && validVariantCount >= 2 && (
                       <div className="space-y-4">
-                        {Object.entries(groupedCombinations()).map(([firstOption, combinations]) => (
-                          <div key={firstOption} className="border border-gray-200 rounded-lg">
-                            <div className="bg-gray-50 px-4 py-3 border-b border-gray-200 flex items-center justify-between">
-                              <h5 className="font-medium text-gray-900">{firstOption}</h5>
-                              <button
-                                type="button"
-                                onClick={() => toggleGroup(firstOption)}
-                                className="text-gray-400 hover:text-gray-600"
-                                aria-label={`Toggle ${firstOption}`}
-                              >
-                                <svg className={`w-4 h-4 transition-transform ${isGroupOpen(firstOption) ? "" : "rotate-180"}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                                </svg>
-                              </button>
-                            </div>
-
-                            {isGroupOpen(firstOption) && (
-                              <div className="p-4">
-                                {Array.from(new Set(combinations.map((c) => c[1])))
-                                  .filter(Boolean)
-                                  .map((secondOption) => (
-                                    <div key={String(secondOption)} className="mb-4">
-                                      <div className="bg-gray-100 px-3 py-2 border border-gray-200 rounded flex items-center justify-between">
-                                        <h6 className="font-medium text-gray-800">{String(secondOption)}</h6>
-                                        <button
-                                          type="button"
-                                          onClick={() => toggleSub(firstOption, String(secondOption))}
-                                          className="text-gray-400 hover:text-gray-600"
-                                          aria-label={`Toggle ${firstOption} - ${String(secondOption)}`}
-                                        >
-                                          <svg className={`w-4 h-4 transition-transform ${isSubOpen(firstOption, String(secondOption)) ? "" : "rotate-180"}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                                          </svg>
-                                        </button>
-                                      </div>
-
-                                      {isSubOpen(firstOption, String(secondOption)) && (
-                                        <div className="mt-2 space-y-2">
-                                          {combinations
-                                            .filter((c) => c[1] === secondOption)
-                                            .map((combination, idx) => {
-                                              const valid = getValidVariants();
-                                              const enParts = combination.map((val, pos) => {
-                                                const v = valid[pos];
-                                                const found = v?.options.find(
-                                                  (o) => (o.en || o.id) === val || (o.id || o.en) === val
-                                                );
-                                                return found ? found.en || found.id : String(val);
-                                              });
-                                              const key = enParts.join("-");
-                                              const thirdOption = combination[2];
-                                              return (
-                                                <div key={`${key}-${idx}`} className="flex items-center gap-3 text-sm">
-                                                  <span className="w-24 text-gray-600">{thirdOption || "Price"}</span>
-                                                  <span className="text-gray-500">Rp</span>
-                                                  <input
-                                                    type="number"
-                                                    value={individualPrices[key] || ""}
-                                                    onChange={(e) => handleIndividualPriceChange(key, e.target.value)}
-                                                    className="px-2 py-1 border border-gray-300 rounded text-sm text-black w-32"
-                                                    placeholder="0"
-                                                    min={0}
-                                                  />
-                                                </div>
-                                              );
-                                            })}
-                                        </div>
-                                      )}
-                                    </div>
-                                  ))}
+                        {Object.entries(groupedCombinations()).map(
+                          ([firstOption, combinations]) => (
+                            <div key={firstOption} className="border border-gray-200 rounded-lg">
+                              <div className="bg-gray-50 px-4 py-3 border-b border-gray-200 flex items-center justify-between">
+                                <h5 className="font-medium text-gray-900">{firstOption}</h5>
+                                <button
+                                  type="button"
+                                  onClick={() => toggleGroup(firstOption)}
+                                  className="text-gray-400 hover:text-gray-600"
+                                  aria-label={`Toggle ${firstOption}`}
+                                >
+                                  <svg
+                                    className={`w-4 h-4 transition-transform ${
+                                      isGroupOpen(firstOption) ? "" : "rotate-180"
+                                    }`}
+                                    fill="none"
+                                    stroke="currentColor"
+                                    viewBox="0 0 24 24"
+                                  >
+                                    <path
+                                      strokeLinecap="round"
+                                      strokeLinejoin="round"
+                                      strokeWidth={2}
+                                      d="M19 9l-7 7-7-7"
+                                    />
+                                  </svg>
+                                </button>
                               </div>
-                            )}
-                          </div>
-                        ))}
+
+                              {isGroupOpen(firstOption) && (
+                                <div className="p-4">
+                                  {Array.from(new Set(combinations.map((c) => c[1])))
+                                    .filter(Boolean)
+                                    .map((secondOption) => (
+                                      <div key={String(secondOption)} className="mb-4">
+                                        <div className="bg-gray-100 px-3 py-2 border border-gray-200 rounded flex items-center justify-between">
+                                          <h6 className="font-medium text-gray-800">
+                                            {String(secondOption)}
+                                          </h6>
+                                          <button
+                                            type="button"
+                                            onClick={() => toggleSub(firstOption, String(secondOption))}
+                                            className="text-gray-400 hover:text-gray-600"
+                                            aria-label={`Toggle ${firstOption} - ${String(secondOption)}`}
+                                          >
+                                            <svg
+                                              className={`w-4 h-4 transition-transform ${
+                                                isSubOpen(firstOption, String(secondOption))
+                                                  ? ""
+                                                  : "rotate-180"
+                                              }`}
+                                              fill="none"
+                                              stroke="currentColor"
+                                              viewBox="0 0 24 24"
+                                            >
+                                              <path
+                                                strokeLinecap="round"
+                                                strokeLinejoin="round"
+                                                strokeWidth={2}
+                                                d="M19 9l-7 7-7-7"
+                                              />
+                                            </svg>
+                                          </button>
+                                        </div>
+
+                                        {isSubOpen(firstOption, String(secondOption)) && (
+                                          <div className="mt-2 space-y-2">
+                                            {combinations
+                                              .filter((c) => c[1] === secondOption)
+                                              .map((combination, idx) => {
+                                                const valid = getValidVariants();
+                                                const enParts = combination.map((val, pos) => {
+                                                  const v = valid[pos];
+                                                  const found = v?.options.find(
+                                                    (o) =>
+                                                      (o.en || o.id) === val ||
+                                                      (o.id || o.en) === val
+                                                  );
+                                                  return found ? found.en || found.id : String(val);
+                                                });
+                                                const key = enParts.join("-");
+                                                const thirdOption = combination[2];
+                                                return (
+                                                  <div
+                                                    key={`${key}-${idx}`}
+                                                    className="flex items-center gap-3 text-sm"
+                                                  >
+                                                    <span className="w-24 text-gray-600">
+                                                      {thirdOption || "Price"}
+                                                    </span>
+                                                    <span className="text-gray-500">Rp</span>
+                                                    <input
+                                                      type="number"
+                                                      value={individualPrices[key] || ""}
+                                                      onChange={(e) =>
+                                                        handleIndividualPriceChange(
+                                                          key,
+                                                          e.target.value
+                                                        )
+                                                      }
+                                                      className="px-2 py-1 border border-gray-300 rounded text-sm text-black w-32"
+                                                      placeholder="0"
+                                                      min={0}
+                                                    />
+                                                  </div>
+                                                );
+                                              })}
+                                          </div>
+                                        )}
+                                      </div>
+                                    ))}
+                                </div>
+                              )}
+                            </div>
+                          )
+                        )}
                       </div>
                     )}
                   </div>
@@ -950,56 +1066,72 @@ export default function CreateProductPage() {
                 </div>
 
                 <div className="mb-6">
-                  <label htmlFor="keyword" className="block text-sm font-medium text-gray-700 mb-2">
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
                     Keyword
                   </label>
                   {(["id", "en"] as const).map((langKey) => (
-                    <div key={langKey} className={`${language !== langKey ? "hidden" : "block"}`}>
+                    <div key={langKey} className={language !== langKey ? "hidden" : "block"}>
                       <input
                         type="text"
                         name={`keyword_${langKey}`}
                         value={(formData as any)[`keyword_${langKey}`] || ""}
-                        onChange={(e) => setFormData((prev) => ({ ...prev, [`keyword_${langKey}`]: e.target.value }))}
+                        onChange={(e) =>
+                          setFormData((prev) => ({
+                            ...prev,
+                            [`keyword_${langKey}`]: e.target.value,
+                          }))
+                        }
                         className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm text-black"
-                        placeholder={langKey === "id" ? "Kata kunci SEO (Indonesia)" : "SEO keywords (English)"}
+                        placeholder={
+                          langKey === "id" ? "Kata kunci SEO (Indonesia)" : "SEO keywords (English)"
+                        }
                       />
                     </div>
                   ))}
                 </div>
 
                 <div className="mb-6">
-                  <label htmlFor="seoDescription" className="block text-sm font-medium text-gray-700 mb-2">
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
                     Description
                   </label>
                   {(["id", "en"] as const).map((langKey) => (
-                    <div key={langKey} className={`${language !== langKey ? "hidden" : "block"}`}>
+                    <div key={langKey} className={language !== langKey ? "hidden" : "block"}>
                       <textarea
                         name={`seoDescription_${langKey}`}
                         value={(formData as any)[`seoDescription_${langKey}`] || ""}
-                        onChange={(e) => setFormData((prev) => ({ ...prev, [`seoDescription_${langKey}`]: e.target.value }))}
+                        onChange={(e) =>
+                          setFormData((prev) => ({
+                            ...prev,
+                            [`seoDescription_${langKey}`]: e.target.value,
+                          }))
+                        }
                         rows={6}
                         className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm text-black resize-none"
-                        placeholder={langKey === "id" ? "Deskripsi SEO (Indonesia)" : "SEO description (English)"}
+                        placeholder={
+                          langKey === "id" ? "Deskripsi SEO (Indonesia)" : "SEO description (English)"
+                        }
                       />
                     </div>
                   ))}
                 </div>
               </div>
 
-              {/* Promotion Product Card */}
+              {/* Promotion Product Card (opsional, tidak mempengaruhi submit saat ini) */}
               <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
                 <h3 className="text-lg font-semibold text-gray-900 mb-6">Promotion Product</h3>
-
-                <label className="block text-sm font-medium text-gray-700 mb-2">Promotion Product</label>
-
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Promotion Product
+                </label>
                 <AsyncSelect
                   cacheOptions
                   defaultOptions
                   isClearable
                   loadOptions={loadPromotionOptions}
                   placeholder="Select Promotion Product"
-                  onChange={(selected: any) => setPromotionProduct(selected)}
-                  value={promotionProduct}
+                  onChange={(selected: any) => {
+                    // kalau nanti backend butuh, tambahkan saat submit (tidak mengubah layout)
+                    // contoh: if (selected?.value) fd.append('promotion_product_id', selected.value)
+                  }}
                   formatOptionLabel={(option: any) => (
                     <div className="flex items-center gap-2">
                       {option.image && (
