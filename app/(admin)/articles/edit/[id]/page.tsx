@@ -6,52 +6,38 @@ import { useParams } from "next/navigation";
 import { ArticleForm } from "@/components/articles/ArticleForm";
 import type { Article } from "@/components/articles/useArticleForm";
 
-function toInitial(a: ArticleItem) {
-  const titleId = (a as any)?.title?.id ?? a.title_text ?? "";
-  const titleEn = (a as any)?.title?.en ?? "";
-  const contentId = (a as any)?.content?.id ?? a.content_text ?? "";
-  const contentEn = (a as any)?.content?.en ?? "";
-  const tagsArr: string[] = Array.isArray((a as any).seo_tags) ? (a as any).seo_tags : [];
+function toInitial(a: ArticleItem): Partial<Article> {
+  // ambil bilingual (fallback ke *_text)
+  const titleId = (a as any)?.title?.id ?? (a as any)?.title_id ?? (a as any)?.title_text ?? "";
+  const titleEn = (a as any)?.title?.en ?? (a as any)?.title_en ?? "";
+  const contentId = (a as any)?.content?.id ?? (a as any)?.content_id ?? (a as any)?.content_text ?? "";
+  const contentEn = (a as any)?.content?.en ?? (a as any)?.content_en ?? "";
 
-  const keywordId = (a as any)?.seo_keyword?.id ?? "";
-  const keywordEn = (a as any)?.seo_keyword?.en ?? "";
-  const descId = (a as any)?.seo_description?.id ?? "";
-  const descEn = (a as any)?.seo_description?.en ?? "";
+  // tags (array)
+  const tagsArr: string[] = Array.isArray((a as any)?.seo_tags) ? (a as any).seo_tags : [];
 
-  // Kembalikan shape yang enak dipakai ArticleForm/useArticleForm (bilingual + fallback)
-  const initial: Partial<Article> & any = {
-    // umum
-    slug: a.slug ?? "",
-    coverUrl: a.cover_url ?? undefined,
+  // SEO bilingual
+  const keywordId = (a as any)?.seo_keyword?.id ?? (a as any)?.seo_keyword_id ?? "";
+  const keywordEn = (a as any)?.seo_keyword?.en ?? (a as any)?.seo_keyword_en ?? "";
+  const descId = (a as any)?.seo_description?.id ?? (a as any)?.seo_description_id ?? "";
+  const descEn = (a as any)?.seo_description?.en ?? (a as any)?.seo_description_en ?? "";
 
-    // — Post bilingual —
-    title_id: titleId,
-    title_en: titleEn,
-    content_id: contentId,
-    content_en: contentEn,
+  // cover & slug
+  const coverUrl = (a as any)?.cover_url ?? (a as any)?.cover ?? undefined;
+  const slug = (a as any)?.slug ?? "";
 
-    // Jika ArticleForm-mu masih baca field lama (single), kasih fallback juga:
-    title: titleId || titleEn || "",
-    content: contentId || contentEn || "",
-
-    // — Tags (chip kanan) —
+  // Kembalikan persis shape yang dibaca useArticleForm
+  return {
+    slug,
+    coverUrl,
+    title: { id: titleId ?? "", en: titleEn ?? "" },
+    content: { id: contentId ?? "", en: contentEn ?? "" },
     tags: tagsArr,
-
-    // — SEO bilingual + string helper (kalau formmu punya 2 input per bahasa) —
-    seo_keyword_id: keywordId,
-    seo_keyword_en: keywordEn,
-    seo_description_id: descId,
-    seo_description_en: descEn,
-
-    // Jika form masih punya single fields:
     seo: {
-      tags: tagsArr.join(", "),
-      keyword: keywordId || keywordEn || "",
-      description: descId || descEn || "",
+      keyword: { id: keywordId ?? "", en: keywordEn ?? "" },
+      description: { id: descId ?? "", en: descEn ?? "" },
     },
   };
-
-  return initial as Partial<Article>;
 }
 
 export default function EditArticlePage() {
@@ -83,7 +69,6 @@ export default function EditArticlePage() {
       mode="edit"
       idForEdit={Number(id)}
       initial={initial}
-      showDelete
     />
   );
 }

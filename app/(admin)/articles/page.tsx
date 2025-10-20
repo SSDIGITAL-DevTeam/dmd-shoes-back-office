@@ -12,7 +12,10 @@ import Image from "next/image";
 
 import {
   listArticles,
+  listTrashedArticles,
   deleteArticle as deleteArticleSvc,
+  forceDeleteArticle,
+  restoreArticle,
   toggleArticle,
   type ArticleItem,
   type ListResponse,
@@ -38,7 +41,7 @@ export default function ArticlesPage() {
   });
 
   // ui state
-  const [activeFilter, setActiveFilter] = useState<"All" | "Publish" | "Draft">("All");
+  const [activeFilter, setActiveFilter] = useState<"All" | "Publish" | "Draft" | "Trash">("All");
   const [query, setQuery] = useState("");
   const debouncedQuery = useDebounced(query, 350);
   const [currentPage, setCurrentPage] = useState(1);
@@ -76,6 +79,8 @@ export default function ArticlesPage() {
     return undefined;
   }, [activeFilter]);
 
+  const isTrash = activeFilter === "Trash";
+
   /** fetch dari backend (server-driven pagination + filter + search) */
   const fetchArticles = async () => {
     abortRef.current?.abort();
@@ -85,13 +90,23 @@ export default function ArticlesPage() {
     setLoading(true);
     setError(null);
     try {
-      const res: ListResponse<ArticleItem> = await listArticles({
-        page: currentPage,
-        perPage: itemsPerPage,
-        search: debouncedQuery,
-        status: statusParam,
-        lang: "id", // opsional
-      });
+      let res: ListResponse<ArticleItem>;
+      if (isTrash) {
+        res = await listTrashedArticles({
+          page: currentPage,
+          perPage: itemsPerPage,
+          search: debouncedQuery,
+          lang: "id",
+        });
+      } else {
+        res = await listArticles({
+          page: currentPage,
+          perPage: itemsPerPage,
+          search: debouncedQuery,
+          status: statusParam,
+          lang: "id", // opsional
+        });
+      }
 
       if (ctl.signal.aborted) return;
 
@@ -115,17 +130,18 @@ export default function ArticlesPage() {
   useEffect(() => {
     fetchArticles();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentPage, itemsPerPage, debouncedQuery, statusParam]);
+  }, [currentPage, itemsPerPage, debouncedQuery, statusParam, isTrash]);
 
   /** reset ke page 1 saat filter/search berubah agar hasilnya masuk halaman pertama */
   useEffect(() => {
     setCurrentPage(1);
-  }, [statusParam, debouncedQuery]);
+  }, [statusParam, debouncedQuery, isTrash]);
 
-  // di ArticlesPage component:
+  // Toggle publish
   const [togglingIds, setTogglingIds] = useState<Set<number>>(new Set());
 
   const handleTogglePublish = async (id: number) => {
+    if (isTrash) return; // tidak relevan di Trash
     const target = rows.find(r => r.id === id);
     if (!target) return;
 
@@ -140,11 +156,8 @@ export default function ArticlesPage() {
     setTogglingIds(prev => new Set(prev).add(id));
 
     try {
-      // panggil Next route -> Laravel PATCH /api/v1/articles/{id}/status
       await toggleArticle(id, { status: nextStatus, published: nextPublished, lang: "id" });
-
-      // optional: refetch biar meta sinkron/ikut format backend
-      await fetchArticles();
+      await fetchArticles(); // sinkron meta
       setToast({ show: true, msg: "Status artikel diperbarui", variant: "success" });
     } catch (e: any) {
       // rollback kalau gagal
@@ -162,6 +175,7 @@ export default function ArticlesPage() {
   };
 
   const handleEdit = (id: number) => {
+    if (isTrash) return; // disabled di Trash
     window.location.href = `/articles/edit/${id}`;
   };
 
@@ -178,17 +192,42 @@ export default function ArticlesPage() {
   };
 
   const handleDelete = async (id: number) => {
-    const ok = window.confirm("Hapus artikel ini?");
+    if (isTrash) return; // di Trash pakai force delete
+    const ok = window.confirm("Hapus artikel ini? (akan masuk Trash)");
     if (!ok) return;
     try {
-      await deleteArticleSvc(id);
-      setToast({ show: true, msg: "Artikel berhasil dihapus", variant: "success" });
-
-      // hitung sisa item di halaman ini setelah delete
+      await deleteArticleSvc(id); // soft delete
+      setToast({ show: true, msg: "Artikel dipindah ke Trash", variant: "success" });
       const remaining = rows.length - 1;
       refetchAfterDeleteIfNeeded(remaining);
     } catch (e: any) {
       setToast({ show: true, msg: e?.message || "Gagal menghapus artikel", variant: "error" });
+    }
+  };
+
+  const handleRestore = async (id: number) => {
+    const ok = window.confirm("Kembalikan artikel ini dari Trash?");
+    if (!ok) return;
+    try {
+      await restoreArticle(id);
+      setToast({ show: true, msg: "Artikel berhasil direstore", variant: "success" });
+      const remaining = rows.length - 1;
+      refetchAfterDeleteIfNeeded(remaining);
+    } catch (e: any) {
+      setToast({ show: true, msg: e?.message || "Gagal restore artikel", variant: "error" });
+    }
+  };
+
+  const handleForceDelete = async (id: number) => {
+    const ok = window.confirm("Hapus permanen artikel ini? Tindakan tidak bisa dibatalkan.");
+    if (!ok) return;
+    try {
+      await forceDeleteArticle(id);
+      setToast({ show: true, msg: "Artikel dihapus permanen", variant: "success" });
+      const remaining = rows.length - 1;
+      refetchAfterDeleteIfNeeded(remaining);
+    } catch (e: any) {
+      setToast({ show: true, msg: e?.message || "Gagal hapus permanen", variant: "error" });
     }
   };
 
@@ -206,7 +245,7 @@ export default function ArticlesPage() {
         <nav className="flex items-center gap-2 text-sm text-gray-500">
           <span>Articles</span>
           <span className="text-gray-300">›</span>
-          <span className="text-gray-600">List</span>
+          <span className="text-gray-600">{isTrash ? "Trash" : "List"}</span>
         </nav>
       </div>
 
@@ -214,13 +253,13 @@ export default function ArticlesPage() {
       <div className="px-6 py-6 bg-white border-b border-gray-200">
         <div className="flex items-center justify-between">
           <h1 className="text-2xl font-semibold text-gray-900">Articles</h1>
-          <NewNounButton noun="article" onClick={handleNewArticle} />
+          {!isTrash && <NewNounButton noun="article" onClick={handleNewArticle} />}
         </div>
 
         {/* Filter pills */}
         <div className="mt-6 flex justify-center">
           <div className="inline-flex items-center gap-2 rounded-full bg-gray-100/60 p-1">
-            {(["All", "Publish", "Draft"] as const).map(f => (
+            {(["All", "Publish", "Draft", "Trash"] as const).map(f => (
               <button
                 key={f}
                 onClick={() => setActiveFilter(f)}
@@ -248,7 +287,7 @@ export default function ArticlesPage() {
                   <input
                     value={query}
                     onChange={e => setQuery(e.target.value)}
-                    placeholder="Search"
+                    placeholder={isTrash ? "Search in Trash" : "Search"}
                     className="w-56 rounded-lg border border-gray-300 pl-9 pr-3 py-2 text-sm placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                   />
                   <svg className="absolute left-3 top-2.5 h-4 w-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -289,15 +328,23 @@ export default function ArticlesPage() {
                         </svg>
                       </div>
                     </th>
-                    <th className="px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
-                    <th className="px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      <div className="flex items-center gap-1">
-                        <span>Published</span>
-                        <svg className="h-4 w-4 text-gray-400" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-                          <path strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" d="M8 9l4-4 4 4M8 15l4 4 4-4" />
-                        </svg>
-                      </div>
-                    </th>
+
+                    {!isTrash && (
+                      <>
+                        <th className="px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
+                        <th className="px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                          <div className="flex items-center gap-1">
+                            <span>Published</span>
+                            <svg className="h-4 w-4 text-gray-400" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                              <path strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" d="M8 9l4-4 4 4M8 15l4 4 4-4" />
+                            </svg>
+                          </div>
+                        </th>
+                      </>
+                    )}
+                    {isTrash && (
+                      <th className="px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Deleted At</th>
+                    )}
                     <th className="px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
                   </tr>
                 </thead>
@@ -310,15 +357,21 @@ export default function ArticlesPage() {
                         <td className="px-3 sm:px-6 py-4"><div className="h-12 w-12 rounded bg-gray-200" /></td>
                         <td className="px-3 sm:px-6 py-4"><div className="h-4 w-56 rounded bg-gray-200" /></td>
                         <td className="hidden sm:table-cell px-3 sm:px-6 py-4"><div className="h-4 w-32 rounded bg-gray-200" /></td>
-                        <td className="px-3 sm:px-6 py-4"><div className="h-6 w-20 rounded bg-gray-200" /></td>
-                        <td className="px-3 sm:px-6 py-4"><div className="h-6 w-16 rounded bg-gray-200" /></td>
+                        {!isTrash ? (
+                          <>
+                            <td className="px-3 sm:px-6 py-4"><div className="h-6 w-20 rounded bg-gray-200" /></td>
+                            <td className="px-3 sm:px-6 py-4"><div className="h-6 w-16 rounded bg-gray-200" /></td>
+                          </>
+                        ) : (
+                          <td className="px-3 sm:px-6 py-4"><div className="h-6 w-28 rounded bg-gray-200" /></td>
+                        )}
                         <td className="px-3 sm:px-6 py-4"><div className="h-6 w-20 rounded bg-gray-200" /></td>
                       </tr>
                     ))
                   ) : rows.length === 0 ? (
                     <tr>
-                      <td colSpan={7} className="px-3 sm:px-6 py-10 text-center text-gray-500">
-                        Tidak ada artikel
+                      <td colSpan={isTrash ? 7 : 8} className="px-3 sm:px-6 py-10 text-center text-gray-500">
+                        {isTrash ? "Trash kosong" : "Tidak ada artikel"}
                       </td>
                     </tr>
                   ) : (
@@ -346,22 +399,51 @@ export default function ArticlesPage() {
                         <td className="hidden sm:table-cell px-3 sm:px-6 py-4">
                           <div className="text-sm text-gray-900">{article.author_name}</div>
                         </td>
+
+                        {!isTrash ? (
+                          <>
+                            <td className="px-3 sm:px-6 py-4">
+                              <StatusBadge status={article.status as any} />
+                            </td>
+                            <td className="px-3 sm:px-6 py-4">
+                              <ToggleSwitch
+                                checked={!!article.published}
+                                disabled={isTrash || togglingIds.has(article.id)}
+                                aria-busy={togglingIds.has(article.id)}
+                                onChange={() => handleTogglePublish(article.id)}
+                              />
+                            </td>
+                          </>
+                        ) : (
+                          <td className="px-3 sm:px-6 py-4">
+                            <span className="text-sm text-gray-600">{article.deleted_at ? new Date(article.deleted_at).toLocaleString() : "-"}</span>
+                          </td>
+                        )}
+
                         <td className="px-3 sm:px-6 py-4">
-                          <StatusBadge status={article.status as any} />
-                        </td>
-                        <td className="px-3 sm:px-6 py-4">
-                          <ToggleSwitch
-                            checked={!!article.published}
-                            disabled={togglingIds.has(article.id)}
-                            aria-busy={togglingIds.has(article.id)}
-                            onChange={(_checked) => handleTogglePublish(article.id)}
-                          />
-                        </td>
-                        <td className="px-3 sm:px-6 py-4">
-                          <div className="flex items-center gap-3 sm:gap-4">
-                            <EditButton onClick={() => handleEdit(article.id)} />
-                            <DeleteButton onClick={() => handleDelete(article.id)} />
-                          </div>
+                          {isTrash ? (
+                            <div className="flex items-center gap-3 sm:gap-4">
+                              <button
+                                onClick={() => handleRestore(article.id)}
+                                className="text-green-700 hover:text-green-900 text-sm font-medium"
+                                aria-label="Restore"
+                              >
+                                Restore
+                              </button>
+                              <button
+                                onClick={() => handleForceDelete(article.id)}
+                                className="text-red-700 hover:text-red-900 text-sm font-medium"
+                                aria-label="Delete Permanently"
+                              >
+                                Delete
+                              </button>
+                            </div>
+                          ) : (
+                            <div className="flex items-center gap-3 sm:gap-4">
+                              <EditButton onClick={() => handleEdit(article.id)} />
+                              <DeleteButton onClick={() => handleDelete(article.id)} />
+                            </div>
+                          )}
                         </td>
                       </tr>
                     ))

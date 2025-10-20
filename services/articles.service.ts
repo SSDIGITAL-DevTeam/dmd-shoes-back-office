@@ -1,3 +1,4 @@
+// services/articles.service.ts
 import { apiGet, apiSend, apiSendForm } from "@/lib/api/client";
 
 /** =======================
@@ -8,6 +9,7 @@ export type ItemBase = {
   status?: string;
   created_at?: string;
   updated_at?: string;
+  deleted_at?: string; // untuk Trash tab (opsional di BE, tapi berguna kalau dikirim)
 };
 
 export type ListMeta = {
@@ -54,19 +56,36 @@ export type LangPair = { id: string | null; en: string | null };
 /** =======================
  *  List / Detail
  *  ======================= */
-export async function listArticles(params?: {
+export type ListArticlesParams = {
   page?: number;
   perPage?: number;
   search?: string;
   status?: "publish" | "draft";
-  lang?: "id" | "en" | string;
-}) {
+  lang?: string;
+};
+
+export async function listArticles(
+  params: ListArticlesParams = {}
+): Promise<ListResponse<ArticleItem>> {
+  const { page = 1, perPage = 10, search = "", status, lang = "id" } = params;
   return apiGet<ListResponse<ArticleItem>>("/api/articles", {
-    page: params?.page ?? 1,
-    per_page: params?.perPage ?? 10, // backend expects per_page
-    search: params?.search ?? "",
-    ...(params?.status ? { status: params.status } : {}),
-    ...(params?.lang ? { lang: params.lang } : {}),
+    page,
+    per_page: perPage, // backend expects per_page
+    search,
+    ...(status ? { status } : {}),
+    ...(lang ? { lang } : {}),
+  });
+}
+
+export async function listTrashedArticles(
+  params: Omit<ListArticlesParams, "status"> = {}
+): Promise<ListResponse<ArticleItem>> {
+  const { page = 1, perPage = 10, search = "", lang = "id" } = params;
+  return apiGet<ListResponse<ArticleItem>>("/api/articles/trashed", {
+    page,
+    per_page: perPage,
+    search,
+    ...(lang ? { lang } : {}),
   });
 }
 
@@ -124,21 +143,32 @@ export async function createArticle(payload: ArticleJsonPayload | ArticleMultipa
 export async function updateArticle(id: string | number, payload: ArticleJsonPayload | ArticleMultipartPayload) {
   if (isMultipart(payload)) {
     const form = toFormData(payload);
-    return apiSendForm<UpsertResult>(`/api/articles/${id}`, "PATCH", form);
+    return apiSendForm<UpsertResult>(`/api/articles/${id}`, "PUT", form);
   }
-  return apiSend<UpsertResult>(`/api/articles/${id}`, "PATCH", payload);
+  return apiSend<UpsertResult>(`/api/articles/${id}`, "PUT", payload);
 }
 
 /** =======================
- *  Delete / Toggle
+ *  Delete / Toggle / Restore
  *  ======================= */
 export async function deleteArticle(id: string | number) {
+  // soft delete
   return apiSend<{ status: string; message?: string }>(`/api/articles/${id}`, "DELETE");
+}
+
+export async function forceDeleteArticle(id: number) {
+  // permanent delete
+  return apiSend<{ status: string; message?: string }>(`/api/articles/${id}/force`, "DELETE");
+}
+
+export async function restoreArticle(id: number) {
+  // sesuai controller kamu -> POST /api/v1/articles/{id}/restore (proxy kamu: /api/articles/:id/restore)
+  return apiSend<{ status: string; message?: string }>(`/api/articles/${id}/restore`, "POST", {});
 }
 
 export async function toggleArticle(
   id: string | number,
-  payload: { status: "publish" | "draft"; published?: boolean; lang?: string }
+  payload: { status?: "publish" | "draft"; published?: boolean; lang?: string }
 ) {
   const qs = payload.lang ? `?lang=${encodeURIComponent(payload.lang)}` : "";
   const { lang, ...body } = payload;
