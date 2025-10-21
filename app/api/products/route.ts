@@ -1,8 +1,7 @@
 // app/api/products/route.ts
 import { NextRequest } from "next/server";
-import { ensureEnvOrThrow, makeApiUrl } from "../_utils/backend";
+import { makeApiUrl } from "../../_utils/backend";
 
-/** Header anti-cache untuk semua response proxy */
 const noStoreHeaders = {
   "content-type": "application/json",
   "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
@@ -10,7 +9,6 @@ const noStoreHeaders = {
   Expires: "0",
 } as const;
 
-/** Ambil auth dari header/cookie, sertakan cookie untuk session */
 function makeAuthHeaders(req: NextRequest) {
   const h = new Headers();
   h.set("Accept", "application/json");
@@ -21,11 +19,7 @@ function makeAuthHeaders(req: NextRequest) {
 
   if (!auth) {
     const rawCookie = req.headers.get("cookie") || "";
-    const token = rawCookie
-      .split(";")
-      .map((s) => s.trim())
-      .find((s) => s.startsWith("access_token="))
-      ?.split("=")[1];
+    const token = rawCookie.split(";").map((s) => s.trim()).find((s) => s.startsWith("access_token="))?.split("=")[1];
     if (token) h.set("Authorization", `Bearer ${decodeURIComponent(token)}`);
   }
 
@@ -39,7 +33,6 @@ function makeAuthHeaders(req: NextRequest) {
   return h;
 }
 
-/** Normalisasi body CREATE agar cocok dengan backend */
 async function buildCreateBody(req: NextRequest) {
   const base = makeAuthHeaders(req);
   const ct = req.headers.get("content-type") || "";
@@ -54,13 +47,18 @@ async function buildCreateBody(req: NextRequest) {
     fd.append("description[id]", String(inForm.get("description[id]") ?? inForm.get("description_id") ?? ""));
     fd.append("description[en]", String(inForm.get("description[en]") ?? inForm.get("description_en") ?? ""));
 
+    // plain fields required by backend
+    const namePlain = inForm.get("name");
+    const descPlain = inForm.get("description");
+    if (namePlain) fd.append("name", String(namePlain));
+    if (descPlain) fd.append("description", String(descPlain));
+
     const pm = inForm.get("pricing_mode") ?? inForm.get("pricingMode");
     if (pm != null) fd.append("pricing_mode", String(pm));
-    
+
     const slug = inForm.get("slug");
     if (slug) fd.append("slug", String(slug));
 
-    // booleans -> numeric flags for Laravel
     const status = inForm.get("status");
     const featured = inForm.get("featured");
     fd.append("status", status === "true" || status === "1" ? "1" : "0");
@@ -83,50 +81,59 @@ async function buildCreateBody(req: NextRequest) {
     if (desc_id) fd.append("seo_description[id]", String(desc_id));
     if (desc_en) fd.append("seo_description[en]", String(desc_en));
 
-    // ✅ tags[] — use forEach instead of entries()
-    inForm.forEach((v, k) => {
-      if (k.startsWith("seo_tags[")) fd.append(k, v as Blob | string);
-    });
-
-    // ✅ attributes / variant_prices / gallery — also via forEach
+    // forward arrays
     inForm.forEach((v, k) => {
       if (
+        k.startsWith("seo_tags[") ||
         k.startsWith("attributes[") ||
         k.startsWith("variant_prices[") ||
-        k.startsWith("gallery[")
+        k.startsWith("gallery[") ||
+        k.startsWith("related_products[")
       ) {
         fd.append(k, v as Blob | string);
       }
     });
 
-    // cover
     const cover = inForm.get("cover");
     if (cover) fd.append("cover", cover as Blob);
 
-    base.delete("Content-Type"); // let boundary be set automatically
     return { headers: base as HeadersInit, body: fd as BodyInit };
   }
 
-  // --- JSON (tidak ada file) ---
-  const body = await req.json().catch(() => ({}));
-  // pastikan boolean murni
-  const payload = {
-  ...body,
-  pricing_mode: body.pricing_mode ?? body.pricingMode, // <— penting
-  status: body.status === true || body.status === 1,
-  featured: body.featured === true || body.featured === 1,
-};
+  // JSON
+  const body = await req.json().catch(() => ({} as any));
+
+  const payload: any = {
+    ...body,
+    pricing_mode: body.pricing_mode ?? body.pricingMode,
+  };
+
+  // map bilingual → plain if missing
+  const str = (v: any) => (typeof v === "string" ? v.trim() : "");
+  const tryPick = (...c: any[]) => c.map(str).find((x) => !!x) || "";
+
+  const namePlain = tryPick(body.name, body.name_text, body?.name?.en, body?.name?.id);
+  const descPlain = tryPick(body.description, body.description_text, body?.description?.en, body?.description?.id);
+  if (namePlain) payload.name = namePlain;
+  if (descPlain) payload.description = descPlain;
+
+  // normalize booleans
+  if (typeof body.status !== "undefined") payload.status = !!body.status;
+  if (typeof body.featured !== "undefined") payload.featured = !!body.featured;
+
+  // legacy → related_products
+  if (!Array.isArray(body.related_products)) {
+    const legacy = Array.isArray(body.related_ids) ? body.related_ids : Array.isArray(body.relatedIds) ? body.relatedIds : [];
+    if (legacy.length) payload.related_products = legacy;
+  }
 
   base.set("Content-Type", "application/json");
   return { headers: base as HeadersInit, body: JSON.stringify(payload) as BodyInit };
 }
 
-/** GET /api/products -> forward ke /products?per_page=... */
+/** GET /api/products */
 export async function GET(req: NextRequest) {
-  ensureEnvOrThrow();
   const { searchParams } = new URL(req.url);
-
-  // FE kirim perPage → BE pakai per_page
   const page = searchParams.get("page") ?? "";
   const perPage = searchParams.get("perPage") ?? "";
   const status = searchParams.get("status") ?? "";
@@ -153,7 +160,6 @@ export async function GET(req: NextRequest) {
 
 /** POST /api/products -> CREATE */
 export async function POST(req: NextRequest) {
-  ensureEnvOrThrow();
   const { headers, body } = await buildCreateBody(req);
 
   const res = await fetch(makeApiUrl("products"), {

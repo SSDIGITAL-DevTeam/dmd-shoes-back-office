@@ -1,147 +1,144 @@
+// app/users/create/page.tsx
 "use client";
 
 import React, { useState } from "react";
 import { useRouter } from "next/navigation";
-import { CreateButton, CancelButton } from "@/components/ui/ActionButton";
 import { createUser } from "@/services/users.service";
 
 export default function CreateUserPage() {
   const router = useRouter();
-  const [formData, setFormData] = useState({ name: "", email: "", password: "" });
+  const [form, setForm] = useState({ name: "", email: "", password: "", status: true });
   const [submitting, setSubmitting] = useState(false);
-  const [errorMsg, setErrorMsg] = useState<string | null>(null);
-  const [fieldErr, setFieldErr] = useState<{ name?: string; email?: string; password?: string }>({});
+  const [error, setError] = useState<string | null>(null);
+  const [fieldErr, setFieldErr] = useState<Record<string, string | undefined>>({});
 
-  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
-    const { name, value } = e.target;
-    setFormData((p) => ({ ...p, [name]: value }));
-    if (fieldErr[name as keyof typeof fieldErr]) {
-      setFieldErr((p) => ({ ...p, [name]: undefined }));
-    }
+  const onChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const { name, value, type, checked } = e.target;
+    setForm((p) => ({ ...p, [name]: type === "checkbox" ? checked : value }));
+    if (fieldErr[name]) setFieldErr((m) => ({ ...m, [name]: undefined }));
   };
 
-  const handleCreate = async (e?: React.FormEvent) => {
+  const onSubmit = async (e?: React.FormEvent) => {
     e?.preventDefault();
-    if (submitting) return;
-
     setSubmitting(true);
-    setErrorMsg(null);
+    setError(null);
     setFieldErr({});
-
     try {
       await createUser({
-        name: formData.name.trim(),
-        email: formData.email.trim(),
-        password: formData.password,
-        status: true,
+        name: form.name.trim(),
+        email: form.email.trim(),
+        password: form.password,
+        status: form.status,
       });
       router.push("/users");
     } catch (err: any) {
-      const msg = err?.message || "Failed to create user";
-      setErrorMsg(msg);
+      const msg = err?.message || err?.data?.message || "Failed to create user";
+      setError(msg);
+      const errors = err?.errors || err?.data?.errors;
+      if (errors && typeof errors === "object") {
+        const m: Record<string, string> = {};
+        Object.entries(errors).forEach(([k, v]: any) => (m[k] = Array.isArray(v) ? v[0] : String(v)));
+        setFieldErr(m);
+      }
     } finally {
       setSubmitting(false);
     }
   };
 
-  const handleCancel = () => router.push("/users");
-
   return (
     <div className="min-h-full">
-      {/* Breadcrumb */}
-      <div className="bg-white border-b border-gray-200 px-6 py-3">
-        <nav className="flex items-center gap-2 text-sm text-gray-600">
-          <a href="/dashboard" className="hover:underline">Dashboard</a>
-          <span>/</span>
-          <a href="/users" className="hover:underline">Users</a>
-          <span>/</span>
-          <span className="text-gray-900 font-medium">Create</span>
-        </nav>
+      <div className="bg-white border-b border-gray-200 px-6 py-4">
+        <div className="flex items-center text-sm text-gray-500">
+          <button onClick={() => router.push("/users")} className="hover:underline">Users</button>
+          <span className="mx-2 text-gray-300">›</span>
+          <span className="text-gray-600">Create</span>
+        </div>
       </div>
 
-      {/* Header */}
-      <div className="flex items-center justify-between px-6 py-4">
-        <h1 className="text-xl font-semibold text-gray-900">Create User</h1>
-      </div>
+      <form onSubmit={onSubmit} className="px-6 py-6">
+        <div className="rounded-xl border border-gray-200 bg-white shadow-sm">
+          <div className="border-b border-gray-200 px-6 py-4">
+            <h1 className="text-2xl font-semibold text-gray-900">Create User</h1>
+          </div>
 
-      {/* Content */}
-      <div className="px-6 pb-10">
-        <div className="rounded-lg border bg-white p-6">
-          {errorMsg && (
-            <div className="mb-4 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
-              {errorMsg}
+          {error && (
+            <div className="mx-6 mt-4 rounded-md border border-red-100 bg-red-50 px-4 py-3 text-sm text-red-700">
+              {error}
             </div>
           )}
 
-          <form onSubmit={handleCreate} className="grid grid-cols-1 gap-5 md:grid-cols-2">
-            {/* Left */}
-            <div className="space-y-4">
-              {/* Name */}
-              <div>
-                <label htmlFor="name" className="mb-1 block text-xs font-medium text-slate-600">Name</label>
-                <input
-                  id="name"
-                  name="name"
-                  value={formData.name}
-                  onChange={handleInputChange}
-                  placeholder="Enter full name"
-                  className={`w-full rounded-lg border px-3 py-2.5 text-sm text-black focus:border-[#0C3C66] focus:ring-[#0C3C66] ${
-                    fieldErr.name ? "border-red-400" : "border-gray-300"
-                  }`}
-                />
-                {fieldErr.name && <p className="mt-1 text-xs text-red-600">{fieldErr.name}</p>}
-              </div>
-
-              {/* Email */}
-              <div>
-                <label htmlFor="email" className="mb-1 block text-xs font-medium text-slate-600">Email</label>
-                <input
-                  id="email"
-                  name="email"
-                  type="email"
-                  value={formData.email}
-                  onChange={handleInputChange}
-                  placeholder="email@example.com"
-                  className={`w-full rounded-lg border px-3 py-2.5 text-sm text-black focus:border-[#0C3C66] focus:ring-[#0C3C66] ${
-                    fieldErr.email ? "border-red-400" : "border-gray-300"
-                  }`}
-                />
-                {fieldErr.email && <p className="mt-1 text-xs text-red-600">{fieldErr.email}</p>}
-              </div>
+          <div className="grid gap-6 px-6 py-6 md:grid-cols-2">
+            <div>
+              <label className="mb-1 block text-sm font-medium text-gray-700">Name</label>
+              <input
+                name="name"
+                value={form.name}
+                onChange={onChange}
+                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-black placeholder:text-gray-400 focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                placeholder="Full name"
+              />
+              {fieldErr.name && <p className="mt-1 text-xs text-red-600">{fieldErr.name}</p>}
             </div>
 
-            {/* Right */}
-            <div className="space-y-4">
-              {/* Password */}
-              <div>
-                <label htmlFor="password" className="mb-1 block text-xs font-medium text-slate-600">Password</label>
-                <input
-                  id="password"
-                  name="password"
-                  type="password"
-                  value={formData.password}
-                  onChange={handleInputChange}
-                  placeholder="Enter password"
-                  className={`w-full rounded-lg border px-3 py-2.5 text-sm text-black focus:border-[#0C3C66] focus:ring-[#0C3C66] ${
-                    fieldErr.password ? "border-red-400" : "border-gray-300"
-                  }`}
-                />
-                {fieldErr.password && <p className="mt-1 text-xs text-red-600">{fieldErr.password}</p>}
-              </div>
+            <div>
+              <label className="mb-1 block text-sm font-medium text-gray-700">Email</label>
+              <input
+                type="email"
+                name="email"
+                value={form.email}
+                onChange={onChange}
+                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-black placeholder:text-gray-400 focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                placeholder="fiqi@mail.com"
+              />
+              {fieldErr.email && <p className="mt-1 text-xs text-red-600">{fieldErr.email}</p>}
             </div>
 
-            <button type="submit" className="hidden" />
-          </form>
+            <div>
+              <label className="mb-1 block text-sm font-medium text-gray-700">Password</label>
+              <input
+                type="password"
+                name="password"
+                value={form.password}
+                onChange={onChange}
+                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-black placeholder:text-gray-400 focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                placeholder="••••••••"
+              />
+              {fieldErr.password && <p className="mt-1 text-xs text-red-600">{fieldErr.password}</p>}
+            </div>
 
-          {/* Actions */}
-          <div className="mt-6 flex items-center gap-3">
-            <CreateButton onClick={handleCreate} disabled={submitting}>
+            <div className="flex items-center gap-3 pt-6">
+              <input
+                id="status"
+                type="checkbox"
+                name="status"
+                checked={form.status}
+                onChange={onChange}
+                className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+              />
+              <label htmlFor="status" className="text-sm text-gray-700">
+                Active
+              </label>
+            </div>
+          </div>
+
+          <div className="flex items-center justify-end gap-2 border-t border-gray-200 px-6 py-4">
+            <button
+              type="button"
+              onClick={() => router.push("/users")}
+              className="rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm text-gray-700 hover:bg-gray-50"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={submitting}
+              className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-60"
+            >
               {submitting ? "Saving..." : "Create"}
-            </CreateButton>
-            <CancelButton onClick={handleCancel}>Cancel</CancelButton>
+            </button>
           </div>
         </div>
-      </div>
+      </form>
     </div>
   );
 }

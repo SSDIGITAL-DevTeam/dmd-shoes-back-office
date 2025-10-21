@@ -40,10 +40,7 @@ function resolveBadgeStatus(input: unknown): BadgeStatus {
 /** ======================
  *  Helpers
  *  ====================== */
-const STORAGE_BASE = (process.env.NEXT_PUBLIC_STORAGE_URL || "").replace(
-  /\/$/,
-  ""
-);
+const STORAGE_BASE = (process.env.NEXT_PUBLIC_STORAGE_URL || "").replace(/\/$/, "");
 const PLACEHOLDER = "/api/placeholder/50/50";
 
 const toImageUrl = (raw?: string | null) => {
@@ -82,21 +79,11 @@ function toCategoryText(cat?: ApiCategory | null): string {
   return t || "-";
 }
 
-/** Helper nama kategori dari item produk:
- *  1) `category_name` (presenter BE)
- *  2) object/string `category` (atau `category_brief`)
- *  3) `category_id` → lookup ke catMap
- *  4) slug cadangan
- */
-function categoryNameFromProduct(
-  item: any,
-  catMap: Record<number, string>
-): string {
-  // 1) langsung dari presenter
+/** Helper nama kategori dari item produk */
+function categoryNameFromProduct(item: any, catMap: Record<number, string>): string {
   const direct = safeText(item?.category_name, currentLocale);
   if (direct) return direct;
 
-  // 2) object/string category
   if (item?.category) {
     const asText =
       safeText(item.category?.name ?? item.category, currentLocale) ||
@@ -104,12 +91,9 @@ function categoryNameFromProduct(
     if (asText) return asText;
   }
 
-  // 3) lookup via id
-  const cid =
-    item?.category_id ?? item?.categoryId ?? item?.category_id_id ?? null;
+  const cid = item?.category_id ?? item?.categoryId ?? item?.category_id_id ?? null;
   if (cid && catMap[cid]) return catMap[cid];
 
-  // 4) category_brief atau slug terakhir
   const brief =
     safeText(item?.category_brief?.name, currentLocale) ||
     item?.category_brief?.slug;
@@ -121,6 +105,8 @@ function categoryNameFromProduct(
 /** ======================
  *  Komponen Utama
  *  ====================== */
+type StatusFilter = "all" | "active" | "inactive";
+
 export default function ProductsPage() {
   const router = useRouter();
 
@@ -139,6 +125,7 @@ export default function ProductsPage() {
   const [page, setPage] = useState<number>(1);
   const [pageSize, setPageSize] = useState<number>(12);
   const [searchValue, setSearchValue] = useState<string>("");
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const debouncedSearch = useDebounce(searchValue, 500);
 
   /** 1) Load kategori sekali (status=all; per_page besar) */
@@ -154,10 +141,10 @@ export default function ProductsPage() {
 
         if (!mounted) return;
 
-        const list = Array.isArray(res?.data) ? res.data : [];
+        const list = Array.isArray(res?.data) ? res.data : Array.isArray((res as any)?.data?.data) ? (res as any).data.data : [];
         const map: Record<number, string> = {};
-        list.forEach((c) => {
-          map[c.id] = toCategoryText(c);
+        list.forEach((c: ApiCategory | null | undefined) => {
+          if (c && typeof c.id === "number") map[c.id] = toCategoryText(c);
         });
         setCatMap(map);
       } catch {
@@ -169,7 +156,11 @@ export default function ProductsPage() {
     };
   }, []);
 
-  /** 2) Ambil produk ACTIVE + INACTIVE → gabung → virtual paginate */
+  /** 2) Ambil produk:
+   *  - all      -> active + inactive, gabung & virtual paginate
+   *  - active   -> 1 request
+   *  - inactive -> 1 request
+   */
   useEffect(() => {
     let mounted = true;
 
@@ -178,46 +169,59 @@ export default function ProductsPage() {
         setLoading(true);
         setErrorMsg(null);
 
-        const take = Math.max(page, 1) * pageSize;
         const q = debouncedSearch || undefined;
 
-        const [resActive, resInactive] = await Promise.all([
-          listProducts({
-            page: 1,
-            perPage: take,
+        if (statusFilter === "all") {
+          // ambil 2 status, gabung, paginate virtual
+          const take = Math.max(page, 1) * pageSize;
+
+          const [resActive, resInactive] = await Promise.all([
+            listProducts({ page: 1, perPage: take, search: q, status: "active" as any }),
+            listProducts({ page: 1, perPage: take, search: q, status: "inactive" as any }),
+          ]);
+
+          if (!mounted) return;
+
+          const a = Array.isArray(resActive?.data) ? resActive.data : [];
+          const b = Array.isArray(resInactive?.data) ? resInactive.data : [];
+          const combined = [...a, ...b];
+
+          const totalActive = resActive?.meta?.total ?? a.length;
+          const totalInactive = resInactive?.meta?.total ?? b.length;
+          const totalItems = totalActive + totalInactive;
+
+          const lastPage = Math.max(1, Math.ceil(totalItems / pageSize));
+          const currentPage = Math.min(Math.max(page, 1), lastPage);
+          const start = (currentPage - 1) * pageSize;
+          const end = start + pageSize;
+
+          setRows(combined.slice(start, end));
+          setMeta({
+            current_page: currentPage,
+            per_page: pageSize,
+            total: totalItems,
+            last_page: lastPage,
+          } as any);
+        } else {
+          // langsung minta status spesifik
+          const res = await listProducts({
+            page,
+            perPage: pageSize,
             search: q,
-            status: "active" as any,
-          }),
-          listProducts({
-            page: 1,
-            perPage: take,
-            search: q,
-            status: "inactive" as any,
-          }),
-        ]);
+            status: statusFilter as any,
+          });
 
-        if (!mounted) return;
+          if (!mounted) return;
 
-        const a = Array.isArray(resActive?.data) ? resActive.data : [];
-        const b = Array.isArray(resInactive?.data) ? resInactive.data : [];
-        const combined = [...a, ...b];
-
-        const totalActive = resActive?.meta?.total ?? a.length;
-        const totalInactive = resInactive?.meta?.total ?? b.length;
-        const totalItems = totalActive + totalInactive;
-
-        const lastPage = Math.max(1, Math.ceil(totalItems / pageSize));
-        const currentPage = Math.min(Math.max(page, 1), lastPage);
-        const start = (currentPage - 1) * pageSize;
-        const end = start + pageSize;
-
-        setRows(combined.slice(start, end));
-        setMeta({
-          current_page: currentPage,
-          per_page: pageSize,
-          total: totalItems,
-          last_page: lastPage,
-        } as any);
+          const list = Array.isArray(res?.data) ? res.data : [];
+          setRows(list);
+          setMeta(res?.meta ?? {
+            current_page: page,
+            per_page: pageSize,
+            total: list.length,
+            last_page: Math.max(1, Math.ceil((res?.meta?.total ?? list.length) / pageSize)),
+          } as any);
+        }
       } catch (err: any) {
         if (!mounted) return;
         setRows([]);
@@ -238,11 +242,16 @@ export default function ProductsPage() {
     return () => {
       mounted = false;
     };
-  }, [page, pageSize, debouncedSearch]);
+  }, [statusFilter, page, pageSize, debouncedSearch]);
+
+  // reset page ketika statusFilter atau keyword berubah
+  useEffect(() => {
+    setPage(1);
+  }, [statusFilter, debouncedSearch]);
 
   const totalItems = meta?.total ?? 0;
 
-  /** 3) Map ke bentuk display (resolve kategori: category_name → category → map → brief/slug) */
+  /** 3) Map ke bentuk display */
   type DisplayProduct = {
     id: number | string;
     nameText: string;
@@ -260,7 +269,6 @@ export default function ProductsPage() {
         safeText(item?.title, currentLocale) ||
         `${item?.slug ?? item?.id}`;
 
-      // brand bisa string / { name: {id,en} }
       const brandText =
         safeText(item?.brand?.name ?? item?.brand, currentLocale) || "-";
 
@@ -296,36 +304,54 @@ export default function ProductsPage() {
   }, [pageSize]);
 
   const handleCreate = () => router.push("/products/create");
-  const handleEdit = (id: number | string) =>
-    router.push(`/products/edit/${id}`);
+  const handleEdit = (id: number | string) => router.push(`/products/edit/${id}`);
 
   const refetchAfterDelete = async () => {
-    const take = Math.max(page, 1) * pageSize;
-    const q = debouncedSearch || undefined;
-    const [resActive, resInactive] = await Promise.all([
-      listProducts({ page: 1, perPage: take, search: q, status: "active" as any }),
-      listProducts({ page: 1, perPage: take, search: q, status: "inactive" as any }),
-    ]);
-    const a = Array.isArray(resActive?.data) ? resActive.data : [];
-    const b = Array.isArray(resInactive?.data) ? resInactive.data : [];
-    const combined = [...a, ...b];
+    // panggil ulang sesuai status filter terpilih
+    if (statusFilter === "all") {
+      const take = Math.max(page, 1) * pageSize;
+      const q = debouncedSearch || undefined;
+      const [resActive, resInactive] = await Promise.all([
+        listProducts({ page: 1, perPage: take, search: q, status: "active" as any }),
+        listProducts({ page: 1, perPage: take, search: q, status: "inactive" as any }),
+      ]);
+      const a = Array.isArray(resActive?.data) ? resActive.data : [];
+      const b = Array.isArray(resInactive?.data) ? resInactive.data : [];
+      const combined = [...a, ...b];
 
-    const totalActive = resActive?.meta?.total ?? a.length;
-    const totalInactive = resInactive?.meta?.total ?? b.length;
-    const totalItems = totalActive + totalInactive;
+      const totalActive = resActive?.meta?.total ?? a.length;
+      const totalInactive = resInactive?.meta?.total ?? b.length;
+      const totalItems = totalActive + totalInactive;
 
-    const lastPage = Math.max(1, Math.ceil(totalItems / pageSize));
-    const currentPage = Math.min(Math.max(page, 1), lastPage);
-    const start = (currentPage - 1) * pageSize;
-    const end = start + pageSize;
+      const lastPage = Math.max(1, Math.ceil(totalItems / pageSize));
+      const currentPage = Math.min(Math.max(page, 1), lastPage);
+      const start = (currentPage - 1) * pageSize;
+      const end = start + pageSize;
 
-    setRows(combined.slice(start, end));
-    setMeta({
-      current_page: currentPage,
-      per_page: pageSize,
-      total: totalItems,
-      last_page: lastPage,
-    } as any);
+      setRows(combined.slice(start, end));
+      setMeta({
+        current_page: currentPage,
+        per_page: pageSize,
+        total: totalItems,
+        last_page: lastPage,
+      } as any);
+    } else {
+      const q = debouncedSearch || undefined;
+      const res = await listProducts({
+        page,
+        perPage: pageSize,
+        search: q,
+        status: statusFilter as any,
+      });
+      const list = Array.isArray(res?.data) ? res.data : [];
+      setRows(list);
+      setMeta(res?.meta ?? {
+        current_page: page,
+        per_page: pageSize,
+        total: list.length,
+        last_page: Math.max(1, Math.ceil((res?.meta?.total ?? list.length) / pageSize)),
+      } as any);
+    }
   };
 
   const handleDelete = async (id: number | string) => {
@@ -367,31 +393,63 @@ export default function ProductsPage() {
         <div className="px-6 py-6">
           <div className="rounded-xl border border-gray-200 bg-white shadow-sm">
             {/* Toolbar */}
-            <div className="flex flex-wrap items-center justify-end gap-2 border-b border-gray-200 px-4 py-3">
-              <div className="flex flex-wrap items-center gap-2">
-                {/* Search */}
-                <div className="relative">
-                  <input
-                    value={searchValue}
-                    onChange={(e) => setSearchValue(e.target.value)}
-                    placeholder="Search"
-                    aria-label="Cari produk"
-                    className="w-64 rounded-lg border border-gray-300 py-2 pl-9 pr-3 text-sm placeholder:text-gray-400 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-blue-500"
+            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-gray-200 px-4 py-3">
+              {/* Status Filter */}
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setStatusFilter("all")}
+                  className={`rounded-lg px-3 py-1.5 text-sm ${
+                    statusFilter === "all"
+                      ? "bg-blue-600 text-white"
+                      : "bg-gray-100 text-gray-700 hover:bg-gray-200"
+                  }`}
+                >
+                  All
+                </button>
+                <button
+                  onClick={() => setStatusFilter("active")}
+                  className={`rounded-lg px-3 py-1.5 text-sm ${
+                    statusFilter === "active"
+                      ? "bg-blue-600 text-white"
+                      : "bg-gray-100 text-gray-700 hover:bg-gray-200"
+                  }`}
+                >
+                  Active
+                </button>
+                <button
+                  onClick={() => setStatusFilter("inactive")}
+                  className={`rounded-lg px-3 py-1.5 text-sm ${
+                    statusFilter === "inactive"
+                      ? "bg-blue-600 text-white"
+                      : "bg-gray-100 text-gray-700 hover:bg-gray-200"
+                  }`}
+                >
+                  Inactive
+                </button>
+              </div>
+
+              {/* Search */}
+              <div className="relative">
+                <input
+                  value={searchValue}
+                  onChange={(e) => setSearchValue(e.target.value)}
+                  placeholder="Search"
+                  aria-label="Cari produk"
+                  className="w-64 rounded-lg border border-gray-300 py-2 pl-9 pr-3 text-sm placeholder:text-gray-400 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+                <svg
+                  className="absolute left-3 top-2.5 h-4 w-4 text-gray-400"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
                   />
-                  <svg
-                    className="absolute left-3 top-2.5 h-4 w-4 text-gray-400"
-                    fill="none"
-                    stroke="currentColor"
-                    viewBox="0 0 24 24"
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
-                    />
-                  </svg>
-                </div>
+                </svg>
               </div>
             </div>
 
@@ -522,7 +580,7 @@ export default function ProductsPage() {
                 page={meta?.current_page ?? page}
                 pageSize={meta?.per_page ?? pageSize}
                 onPageChange={setPage}
-                onPageSizeChange={setPageSize}
+                onPageSizeChange={setPageSize}  
                 pageSizeOptions={pageSizeOptions}
               />
             </div>

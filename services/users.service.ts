@@ -1,3 +1,4 @@
+// services/users.service.ts
 import { http } from "./http";
 
 export type LaravelUser = {
@@ -23,7 +24,6 @@ export async function listUsers(params: {
   if (params.search) qs.set("search", params.search);
 
   const r = await http<{ data: LaravelUser[]; meta: Meta }>(`/api/users?${qs.toString()}`);
-  // fallback bungkus
   if (!Array.isArray(r.data) && (r as any)?.data?.data) {
     const maybe = (r as any).data;
     return { data: maybe.data as LaravelUser[], meta: maybe.meta as Meta };
@@ -42,24 +42,58 @@ export async function getUser(id: string | number) {
   });
   const text = await res.text().catch(() => "");
   const data = text ? JSON.parse(text) : {};
-  // normalisasi agar aman untuk berbagai bentuk response
   return data?.data ?? data;
 }
 
-export async function createUser(body: { name: string; email: string; password: string; status?: boolean }) {
-  const r = await http<Envelope<LaravelUser>>(`/api/users`, {
+/** ====== CREATE with graceful fallback ======
+ * Urutan percobaan:
+ * 1) POST /api/users
+ * 2) POST /api/users/store
+ * 3) POST /api/auth/register
+ */
+async function tryCreate(path: string, body: any) {
+  return http<Envelope<LaravelUser>>(path, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
-  return r.data!;
 }
 
-export async function updateUser(id: string | number, body: Partial<Pick<LaravelUser, "name" | "email" | "status">>) {
+export async function createUser(body: { name: string; email: string; password: string; status?: boolean }) {
+  try {
+    const r1 = await tryCreate(`/api/users`, body);
+    return r1.data!;
+  } catch (e: any) {
+    const msg = (e?.message || "").toLowerCase();
+    const text = (e?.data?.message || e?.raw || "").toLowerCase();
+    // deteksi “post not supported”/405/MethodNotAllowed
+    const methodNotAllowed =
+      msg.includes("not supported") ||
+      msg.includes("405") ||
+      text.includes("not supported") ||
+      text.includes("method not allowed");
+    if (!methodNotAllowed) throw e;
+  }
+
+  // fallback #1
+  try {
+    const r2 = await tryCreate(`/api/users/store`, body);
+    return r2.data!;
+  } catch (e2: any) {
+    // fallback #2
+    const r3 = await tryCreate(`/api/auth/register`, body);
+    return r3.data!;
+  }
+}
+
+export async function updateUser(
+  id: string | number,
+  body: Partial<Pick<LaravelUser, "name" | "email" | "status">>
+) {
   const r = await http<Envelope<LaravelUser>>(`/api/users/${id}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body)
+    body: JSON.stringify(body),
   });
   return r.data!;
 }

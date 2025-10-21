@@ -9,8 +9,11 @@ import ToggleSwitch from "@/components/ui/ToggleSwitch";
 import { DeleteButton as DeleteIcon } from "@/components/ui/DeleteIcon";
 import AsyncSelect from "react-select/async";
 import ProductGallery from "./_components/ProductGallery";
+import PromotionProductPickers, {
+  type PromotionProductPickersValue,
+} from "@/components/products/PromotionProductPicker";
+import { loadAllCategoryOptions } from "@/services/categories.service";
 
-/** ===== Utils: kunci kanonik bilingual (stabil) ===== */
 type Bi = { id: string; en: string };
 const norm = (s?: string) => (s ?? "").trim().toLowerCase();
 const keyOf = (v: Bi) => `${norm(v.id)}|${norm(v.en)}`;
@@ -21,6 +24,11 @@ const toSizeEU = (v: Bi) => {
   const raw = (v.en || v.id || "").trim();
   const n = Number(raw);
   return Number.isFinite(n) ? n : undefined;
+};
+const pickPlain = (idVal?: string, enVal?: string) => {
+  const a = (idVal || "").trim();
+  const b = (enVal || "").trim();
+  return b || a;
 };
 
 interface Gallery {
@@ -49,7 +57,6 @@ export default function CreateProductPage() {
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [language, setLanguage] = useState<"id" | "en">("en");
 
-  // --- FORM STATE ---
   const [formData, setFormData] = useState({
     name: "",
     slug: "",
@@ -60,7 +67,7 @@ export default function CreateProductPage() {
     tags: "",
     keyword: "",
     seoDescription: "",
-    featured: false,
+    featured: true,
     status: true,
     heel_height_cm: "",
     cover_url: "",
@@ -73,9 +80,16 @@ export default function CreateProductPage() {
     "single"
   );
 
-  // harga 1 dimensi (pakai keyOf(option))
+  // Promotion pickers
+  const [promoPick, setPromoPick] = useState<PromotionProductPickersValue>({
+    p1: null,
+    p2: null,
+    p3: null,
+    p4: null,
+  });
+
+  // Pricing states
   const [groupPrices, setGroupPrices] = useState<Record<string, string>>({});
-  // harga ≥2 dimensi (pakai comboKey(labels))
   const [individualPrices, setIndividualPrices] = useState<
     Record<string, string>
   >({});
@@ -127,39 +141,14 @@ export default function CreateProductPage() {
       { id: p.length + 1, image: "", title: "", alt: "", fileName: "file.jpg" },
     ]);
 
-  // Category & promo
+  // Category options
   const loadCategoryOptions = useCallback(async (q: string) => {
     try {
-      const res = await api.get(`/category`, {
-        params: { status: "active", perPage: 100, search: q, parent: "top" },
-      });
-      const list = (res as any)?.data?.data || (res as any)?.data || [];
-      return list.map((c: any) => ({
-        value: c.id,
-        label:
-          (c.name && (c.name.id || c.name.en)) || c.slug || `Category ${c.id}`,
-        image: c.cover_url || c.cover || null,
-      }));
-    } catch {
-      return [];
-    }
-  }, []);
-
-  const [promotionProduct, setPromotionProduct] = useState<{
-    value: number;
-    label: string;
-  } | null>(null);
-  const loadPromotionOptions = useCallback(async (q: string) => {
-    try {
-      const res = await api.get(`/products`, {
-        params: { status: "publish", perPage: 100, search: q },
-      });
-      const list = (res as any)?.data?.data || (res as any)?.data || [];
-      return list.map((p: any) => ({
-        value: p.id,
-        label:
-          (p.name && (p.name.id || p.name.en)) || p.slug || `Product ${p.id}`,
-        image: p.cover_url || p.cover || null,
+      const options = await loadAllCategoryOptions(q || "", "id", 500);
+      return options.map((o) => ({
+        value: o.value,
+        label: o.label,
+        image: o.image ?? null,
       }));
     } catch {
       return [];
@@ -222,7 +211,6 @@ export default function CreateProductPage() {
   const handleIndividualPriceChange = (k: string, val: string) =>
     setIndividualPrices((p) => ({ ...p, [k]: val }));
 
-  // Valid variants
   const getValidVariants = useMemo(
     () => () =>
       variants.filter((v) =>
@@ -232,13 +220,11 @@ export default function CreateProductPage() {
   );
   const validVariantCount = getValidVariants().length;
 
-  // Reset group prices saat dimensi ≠ 1
   useEffect(() => {
     if (validVariantCount !== 1 && Object.keys(groupPrices).length)
       setGroupPrices({});
   }, [validVariantCount]); // eslint-disable-line
 
-  // Kombinasi bilingual: Bi[][]
   const generateVariantCombinationsBi = useCallback((): Bi[][] => {
     const valid = getValidVariants();
     if (!valid.length) return [];
@@ -254,7 +240,6 @@ export default function CreateProductPage() {
     return combos;
   }, [getValidVariants]);
 
-  // Grouped (pakai key kanonik tapi label sesuai bahasa UI)
   const groupedCombinations = () => {
     const groups: Record<
       string,
@@ -282,7 +267,16 @@ export default function CreateProductPage() {
     return groups;
   };
 
-  // ==== POST ====
+  const buildRelatedProducts = () =>
+    [
+      promoPick.p1?.value,
+      promoPick.p2?.value,
+      promoPick.p3?.value,
+      promoPick.p4?.value,
+    ]
+      .map((v) => (v == null ? null : Number(v)))
+      .filter((v): v is number => Number.isFinite(v));
+
   const handleCreate = async () => {
     setErrorMessage(null);
     setSuccessMessage(null);
@@ -307,15 +301,21 @@ export default function CreateProductPage() {
       (formData as any).description_en ||
       "";
 
-    // Tentukan pricing mode TEPAT SAAT SUBMIT dari radio
+    const plainName = pickPlain(name_id, name_en);
+    const plainDesc = pickPlain(description_id, description_en);
+
     const pricingMode: "single" | "per_variant" =
       pricingType === "single" ? "single" : "per_variant";
 
     const errs: string[] = [];
-    if (!name_en) errs.push("Nama produk (EN) wajib diisi.");
+    if (!plainName) errs.push("Nama produk wajib diisi.");
     if (!slug) errs.push("Slug wajib diisi.");
-    if (!description_en) errs.push("Deskripsi (EN) wajib diisi.");
+    if (!plainDesc) errs.push("Deskripsi (EN/ID) wajib diisi.");
     if (!categoryId) errs.push("Kategori wajib dipilih.");
+
+    if (!name_id && !name_en) errs.push("Nama produk wajib diisi (ID/EN).");
+    if (!description_id && !description_en)
+      errs.push("Deskripsi wajib diisi (ID/EN).");
 
     const rootPriceValue = parseNumber(formData.price);
     const validVariants = getValidVariants();
@@ -336,7 +336,6 @@ export default function CreateProductPage() {
     }
     setSubmitting(true);
 
-    // builder helpers
     const buildAttributes = () =>
       validVariants.map((variant, index) => ({
         name: {
@@ -410,27 +409,28 @@ export default function CreateProductPage() {
       const keyword_en = (formData as any).keyword_en?.trim() || "";
       const seoDesc_id = (formData as any).seoDescription_id?.trim() || "";
       const seoDesc_en = (formData as any).seoDescription_en?.trim() || "";
+      const related_products = [
+        promoPick.p1?.value,
+        promoPick.p2?.value,
+        promoPick.p3?.value,
+        promoPick.p4?.value,
+      ]
+        .map((v) => (v == null ? null : Number(v)))
+        .filter((v): v is number => Number.isFinite(v));
 
-      // cek apakah ada file
       const hasGalleryFiles = galleries.some((g) => g.file);
       const hasCoverFile = !!coverFile;
       const hasFiles = hasGalleryFiles || hasCoverFile;
 
       if (!hasFiles) {
-        // ===== JSON PATH =====
+        // ===== JSON (HAPUS name/description plain) =====
         const payload: any = {
           status: !!formData.status,
           featured: !!formData.featured,
           category_id: Number(categoryId),
-          pricing_mode: pricingMode, // <<-- single / per_variant
-          name: {
-            id: (formData as any).name_id || "",
-            en: (formData as any).name_en || "",
-          },
-          description: {
-            id: (formData as any).description_id || "",
-            en: (formData as any).description_en || "",
-          },
+          pricing_mode: pricingMode,
+          name: { id: name_id, en: name_en }, // ← array/object
+          description: { id: description_id, en: description_en }, // ← array/object
           slug,
           heel_height_cm: Number(formData.heel_height_cm || 0),
           seo_tags: seoTags,
@@ -438,17 +438,19 @@ export default function CreateProductPage() {
           seo_description: { id: seoDesc_id, en: seoDesc_en },
         };
 
-        if (pricingMode === "single" && rootPriceValue != null) {
+        if (pricingMode === "single" && rootPriceValue != null)
           payload.price = rootPriceValue;
-        }
 
         const attributes = buildAttributes();
         if (attributes.length) payload.attributes = attributes;
 
         if (pricingMode === "per_variant" && attributes.length) {
           const vps = buildVariantPrices();
-          if (vps.length) payload.variant_prices = vps;
+          if (vps && vps.length) payload.variant_prices = vps;
         }
+
+        if (related_products.length)
+          payload.related_products = related_products;
 
         const res = await api.post(`/products`, JSON.stringify(payload), {
           headers: { "Content-Type": "application/json" },
@@ -458,17 +460,18 @@ export default function CreateProductPage() {
         return;
       }
 
-      // ===== MULTIPART PATH =====
+      // ===== MULTIPART (HAPUS field plain `name` & `description`) =====
       const fd = new FormData();
       fd.append("status", formData.status ? "1" : "0");
       fd.append("featured", formData.featured ? "1" : "0");
       fd.append("category_id", String(Number(categoryId)));
-      fd.append("pricing_mode", pricingMode); // "single" | "per_variant"
+      fd.append("pricing_mode", pricingMode);
 
-      fd.append("name[id]", (formData as any).name_id || "");
-      fd.append("name[en]", (formData as any).name_en || "");
-      fd.append("description[id]", (formData as any).description_id || "");
-      fd.append("description[en]", (formData as any).description_en || "");
+      fd.append("name[id]", name_id);
+      fd.append("name[en]", name_en);
+      fd.append("description[id]", description_id);
+      fd.append("description[en]", description_en);
+
       fd.append("slug", slug);
       fd.append("heel_height_cm", String(Number(formData.heel_height_cm || 0)));
 
@@ -480,12 +483,9 @@ export default function CreateProductPage() {
 
       if (coverFile) fd.append("cover", coverFile);
 
-      // HANYA kirim base price ketika mode single
-      if (pricingMode === "single" && rootPriceValue != null) {
+      if (pricingMode === "single" && rootPriceValue != null)
         fd.append("price", String(rootPriceValue));
-      }
 
-      // attributes
       const attributes = buildAttributes();
       if (attributes.length) {
         attributes.forEach((attr, i) => {
@@ -498,7 +498,6 @@ export default function CreateProductPage() {
         });
       }
 
-      // variant_prices untuk per_variant
       if (pricingMode === "per_variant" && attributes.length) {
         const vps = buildVariantPrices() || [];
         vps.forEach((vp, i) => {
@@ -509,13 +508,11 @@ export default function CreateProductPage() {
           fd.append(`variant_prices[${i}][price]`, String(vp.price));
           fd.append(`variant_prices[${i}][stock]`, String(vp.stock));
           fd.append(`variant_prices[${i}][active]`, vp.active ? "1" : "0");
-          if (vp.size_eu != null) {
+          if (vp.size_eu != null)
             fd.append(`variant_prices[${i}][size_eu]`, String(vp.size_eu));
-          }
         });
       }
 
-      // galleries (tidak diubah)
       galleries.forEach((g, i) => {
         if (g.file) fd.append(`gallery[${i}][image]`, g.file);
         if (g.title) fd.append(`gallery[${i}][title]`, g.title);
@@ -523,28 +520,10 @@ export default function CreateProductPage() {
         fd.append(`gallery[${i}][sort]`, String(i));
       });
 
-      // ===== DEBUG: log isi FormData sebelum post
-      try {
-        const debugEntries: any[] = [];
-        (fd as any).forEach((v: any, k: string) => {
-          debugEntries.push([
-            k,
-            v instanceof File ? `(File:${v.name}, ${v.size} bytes)` : v,
-          ]);
-        });
-        console.log(
-          "%c[CREATE PRODUCT] FormData to backend",
-          "color:#2563EB;font-weight:bold",
-          Object.fromEntries(debugEntries)
-        );
-      } catch (e) {
-        console.log(
-          "[CREATE PRODUCT] (debug) failed to read FormData entries",
-          e
-        );
-      }
+      related_products.forEach((id, idx) =>
+        fd.append(`related_products[${idx}]`, String(id))
+      );
 
-      // POST
       const res = await api.post(`/products`, fd as any);
       setSuccessMessage(res.data?.message || "Produk berhasil dibuat.");
       setTimeout(() => router.push("/products"), 800);
@@ -784,7 +763,7 @@ export default function CreateProductPage() {
                   />
                 </div>
 
-                {/* Base Price */}
+                {/* Price */}
                 <div className="mb-6">
                   <label
                     htmlFor="price"
@@ -1345,51 +1324,14 @@ export default function CreateProductPage() {
                 </div>
               </div>
 
-              {/* Promotion (opsional) */}
+              {/* Promotion (4 pickers) */}
               <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
                 <h3 className="text-lg font-semibold text-gray-900 mb-6">
                   Promotion Product
                 </h3>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Promotion Product
-                </label>
-                <AsyncSelect
-                  cacheOptions
-                  defaultOptions
-                  isClearable
-                  loadOptions={loadPromotionOptions}
-                  placeholder="Select Promotion Product"
-                  onChange={(opt: any) =>
-                    setPromotionProduct(
-                      opt ? { value: opt.value, label: opt.label } : null
-                    )
-                  }
-                  formatOptionLabel={(option: any) => (
-                    <div className="flex items-center gap-2">
-                      {option.image && (
-                        <img
-                          src={option.image}
-                          alt={option.label}
-                          className="w-6 h-6 rounded object-cover"
-                        />
-                      )}
-                      <span>{option.label}</span>
-                    </div>
-                  )}
-                  styles={{
-                    control: (base: any) => ({
-                      ...base,
-                      borderRadius: "0.75rem",
-                      borderColor: "#e5e7eb",
-                      padding: "2px",
-                      minHeight: "44px",
-                    }),
-                    valueContainer: (base: any) => ({
-                      ...base,
-                      padding: "0 10px",
-                    }),
-                    placeholder: (base: any) => ({ ...base, color: "#6b7280" }),
-                  }}
+                <PromotionProductPickers
+                  value={promoPick}
+                  onChange={setPromoPick}
                 />
               </div>
             </div>

@@ -302,21 +302,6 @@ export default function EditCategoryPage() {
                     </select>
                   </div>
                 </div>
-
-                {/* Status */}
-                <div className="mt-6">
-                  <label className="block text-sm font-medium text-gray-700 mb-2">Status</label>
-                  <label className="inline-flex items-center gap-2">
-                    <input
-                      type="checkbox"
-                      name="status"
-                      checked={formData.status}
-                      onChange={handleInputChange}
-                      className="h-4 w-4 rounded border-gray-300"
-                    />
-                    <span className="text-sm text-gray-700">Active</span>
-                  </label>
-                </div>
               </div>
             </div>
 

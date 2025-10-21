@@ -1,7 +1,7 @@
 // app/api/articles/[id]/route.ts
 import { NextRequest } from "next/server";
-import { ensureEnvOrThrow, makeApiUrl } from "../../_utils/backend";
-import { http } from "../../_utils/http";
+import { ensureEnvOrThrow, makeApiUrl } from "../../../_utils/backend";
+import { http } from "../../../_utils/http";
 
 export async function GET(_: NextRequest, { params }: { params: { id: string } }) {
   ensureEnvOrThrow();
