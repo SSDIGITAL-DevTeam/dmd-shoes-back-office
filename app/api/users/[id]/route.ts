@@ -1,121 +1,90 @@
-export const runtime = "nodejs";
+import { NextRequest } from "next/server";
+import { makeApiUrl } from "../../../_utils/backend"; // sesuaikan bila pakai src/
 
-import { NextRequest, NextResponse } from "next/server";
-import { ensureEnvOrThrow, makeApiUrl, readCookie } from "../../../_utils/backend";
-
-const noStore = {
+const noStoreHeaders = {
   "content-type": "application/json",
   "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
   Pragma: "no-cache",
   Expires: "0",
 } as const;
 
-function resolveAuth(req: NextRequest) {
-  const fromHeader = req.headers.get("authorization");
-  if (fromHeader) return fromHeader;
-  const bearer = readCookie(req.headers.get("cookie") || "", "access_token");
-  if (bearer) return `Bearer ${bearer}`;
-  return undefined;
+function makeAuthHeaders(req: NextRequest) {
+  const h = new Headers();
+  h.set("Accept", "application/json");
+  h.set("X-Requested-With", "XMLHttpRequest");
+  const auth = req.headers.get("authorization");
+  if (auth) h.set("Authorization", auth);
+  if (!auth) {
+    const raw = req.headers.get("cookie") || "";
+    const token = raw.split(";").map(s=>s.trim()).find(s=>s.startsWith("access_token="))?.split("=")[1];
+    if (token) h.set("Authorization", `Bearer ${decodeURIComponent(token)}`);
+  }
+  const cookie = req.headers.get("cookie"); if (cookie) h.set("Cookie", cookie);
+  const origin = req.headers.get("origin"); if (origin) h.set("Origin", origin);
+  const referer = req.headers.get("referer"); if (referer) h.set("Referer", referer);
+  return h;
 }
 
-export async function GET(_req: NextRequest, { params }: { params: { id: string } }) {
-  try {
-    ensureEnvOrThrow();
-
-    const res = await fetch(makeApiUrl(`users/${params.id}`), {
-      method: "GET",
-      headers: {
-        Accept: "application/json",
-        "X-Requested-With": "XMLHttpRequest",
-        ...(resolveAuth(_req) ? { Authorization: resolveAuth(_req)! } : {}),
-      },
-      cache: "no-store",
-    });
-
-    const data =
-      (await res
-        .clone()
-        .json()
-        .catch(async () => await res.clone().text())) ?? {};
-
-    return new NextResponse(
-      typeof data === "string" ? data : JSON.stringify(data),
-      { status: res.status || 200, headers: noStore }
-    );
-  } catch (e: any) {
-    return NextResponse.json(
-      { status: "error", message: e?.message || "Failed to fetch user" },
-      { status: 500, headers: noStore }
-    );
-  }
+export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
+  const res = await fetch(makeApiUrl(`/users/${params.id}`), {
+    method: "GET",
+    headers: makeAuthHeaders(req),
+    cache: "no-store",
+    // @ts-ignore
+    next: { revalidate: 0 },
+    credentials: "include",
+  });
+  const txt = await res.text().catch(() => "");
+  return new Response(txt || "{}", { status: res.status, headers: noStoreHeaders });
 }
 
 export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
-  try {
-    ensureEnvOrThrow();
-    const body = await req
-      .clone()
-      .json()
-      .catch(async () => (await req.clone().text()) || {});
-
-    const res = await fetch(makeApiUrl(`users/${params.id}`), {
-      method: "PATCH",
-      headers: {
-        Accept: "application/json",
-        "Content-Type": "application/json",
-        "X-Requested-With": "XMLHttpRequest",
-        ...(resolveAuth(req) ? { Authorization: resolveAuth(req)! } : {}),
-      },
-      body: typeof body === "string" ? body : JSON.stringify(body),
-      cache: "no-store",
-    });
-
-    const data =
-      (await res
-        .clone()
-        .json()
-        .catch(async () => await res.clone().text())) ?? {};
-
-    return new NextResponse(
-      typeof data === "string" ? data : JSON.stringify(data),
-      { status: res.status || 200, headers: noStore }
-    );
-  } catch (e: any) {
-    return NextResponse.json(
-      { status: "error", message: e?.message || "Failed to update user" },
-      { status: 500, headers: noStore }
-    );
-  }
+  const headers = makeAuthHeaders(req);
+  headers.set("Content-Type", "application/json");
+  const raw = await req.text().catch(() => "");
+  const body = raw ? JSON.parse(raw) : {};
+  const res = await fetch(makeApiUrl(`/users/${params.id}`), {
+    method: "PATCH",
+    headers,
+    body: JSON.stringify(body),
+    cache: "no-store",
+    // @ts-ignore
+    next: { revalidate: 0 },
+    credentials: "include",
+  });
+  const txt = await res.text().catch(() => "");
+  return new Response(txt || "{}", { status: res.status, headers: noStoreHeaders });
 }
 
+/** DELETE /api/users/:id */
 export async function DELETE(req: NextRequest, { params }: { params: { id: string } }) {
-  try {
-    ensureEnvOrThrow();
+  const headers = makeAuthHeaders(req);
 
-    const res = await fetch(makeApiUrl(`users/${params.id}`), {
-      method: "DELETE",
-      headers: {
-        Accept: "application/json",
-        "X-Requested-With": "XMLHttpRequest",
-        ...(resolveAuth(req) ? { Authorization: resolveAuth(req)! } : {}),
-      },
+  // coba DELETE murni dulu
+  let res = await fetch(makeApiUrl(`/users/${params.id}`), {
+    method: "DELETE",
+    headers,
+    cache: "no-store",
+    // @ts-ignore
+    next: { revalidate: 0 },
+    credentials: "include",
+  });
+
+  // jika backend menolak (405/404), fallback ke POST + _method=DELETE (Laravel spoof)
+  if (res.status === 405 || res.status === 404) {
+    const fh = new Headers(headers);
+    fh.set("Content-Type", "application/json");
+    res = await fetch(makeApiUrl(`/users/${params.id}`), {
+      method: "POST",
+      headers: fh,
+      body: JSON.stringify({ _method: "DELETE" }),
       cache: "no-store",
+      // @ts-ignore
+      next: { revalidate: 0 },
+      credentials: "include",
     });
-
-    const data =
-      (await res
-        .clone()
-        .json()
-        .catch(async () => await res.clone().text())) ?? {};
-
-    return new NextResponse(
-      typeof data === "string" ? data : JSON.stringify(data),
-      { status: res.status || 200, headers: noStore }
-    );
-  } catch (e: any) {
-    return NextResponse.json(
-      { status: "error", message: e?.message || "Failed to delete user" },
-      { status: 500, headers: noStore }
-    );
   }
+
+  const txt = await res.text().catch(() => "");
+  return new Response(txt || "{}", { status: res.status, headers: noStoreHeaders });
 }

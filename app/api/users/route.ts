@@ -1,101 +1,62 @@
-export const runtime = "nodejs";
+import { NextRequest } from "next/server";
+import { makeApiUrl } from "../../_utils/backend";
 
-import { NextRequest, NextResponse } from "next/server";
-import { ensureEnvOrThrow, makeApiUrl, readCookie } from "../../_utils/backend";
-
-const noStore = {
+const noStoreHeaders = {
   "content-type": "application/json",
   "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
   Pragma: "no-cache",
   Expires: "0",
 } as const;
 
-function resolveAuth(req: NextRequest) {
-  // 1) Header Authorization jika ada
-  const fromHeader = req.headers.get("authorization");
-  if (fromHeader) return fromHeader;
+function makeAuthHeaders(req: NextRequest) {
+  const h = new Headers();
+  h.set("Accept", "application/json");
+  h.set("X-Requested-With", "XMLHttpRequest");
+  const auth = req.headers.get("authorization");
+  if (auth) h.set("Authorization", auth);
 
-  // 2) Fallback cookie access_token
-  const bearer = readCookie(req.headers.get("cookie") || "", "access_token");
-  if (bearer) return `Bearer ${bearer}`;
+  if (!auth) {
+    const raw = req.headers.get("cookie") || "";
+    const token = raw.split(";").map(s => s.trim()).find(s => s.startsWith("access_token="))?.split("=")[1];
+    if (token) h.set("Authorization", `Bearer ${decodeURIComponent(token)}`);
+  }
 
-  return undefined;
+  const cookie = req.headers.get("cookie");
+  if (cookie) h.set("Cookie", cookie);
+  const origin = req.headers.get("origin");
+  if (origin) h.set("Origin", origin);
+  const referer = req.headers.get("referer");
+  if (referer) h.set("Referer", referer);
+  return h;
 }
 
+/** GET /api/users → forwards to {{baseURL}}/api/v1/users */
 export async function GET(req: NextRequest) {
-  try {
-    ensureEnvOrThrow();
+  const { searchParams } = new URL(req.url);
+  const page    = searchParams.get("page") ?? "";
+  const perPage = searchParams.get("per_page") ?? searchParams.get("perPage") ?? "";
+  const status  = searchParams.get("status") ?? "";
+  const search  = searchParams.get("search") ?? "";
+  const sort    = searchParams.get("sort") ?? "";
+  const order   = searchParams.get("order") ?? "";
 
-    const base = makeApiUrl("users");
-    const url = new URL(base);
-    // teruskan seluruh query dari FE -> BE
-    req.nextUrl.searchParams.forEach((v, k) => {
-      url.searchParams.set(k, v);
-    });
+  const qs = new URLSearchParams();
+  if (page) qs.set("page", page);
+  if (perPage) qs.set("per_page", perPage);
+  if (status) qs.set("status", status); // kirim hanya jika ada (All = tidak dikirim)
+  if (search) qs.set("search", search);
+  if (sort) qs.set("sort", sort);
+  if (order) qs.set("order", order);
 
-    const res = await fetch(url.toString(), {
-      method: "GET",
-      headers: {
-        Accept: "application/json",
-        "X-Requested-With": "XMLHttpRequest",
-        ...(resolveAuth(req) ? { Authorization: resolveAuth(req)! } : {}),
-      },
-      cache: "no-store",
-    });
+  const res = await fetch(makeApiUrl(`/users?${qs.toString()}`), {
+    method: "GET",
+    headers: makeAuthHeaders(req),
+    cache: "no-store",
+    // @ts-ignore
+    next: { revalidate: 0 },
+    credentials: "include",
+  });
 
-    // coba JSON, kalau gagal ambil text agar tidak melempar error parsing
-    const data =
-      (await res
-        .clone()
-        .json()
-        .catch(async () => await res.clone().text())) ?? {};
-
-    return new NextResponse(
-      typeof data === "string" ? data : JSON.stringify(data),
-      { status: res.status || 200, headers: noStore }
-    );
-  } catch (e: any) {
-    return NextResponse.json(
-      { status: "error", message: e?.message || "Failed to fetch users" },
-      { status: 500, headers: noStore }
-    );
-  }
-}
-
-export async function POST(req: NextRequest) {
-  try {
-    ensureEnvOrThrow();
-    const body = await req
-      .clone()
-      .json()
-      .catch(async () => (await req.clone().text()) || {});
-
-    const res = await fetch(makeApiUrl("users"), {
-      method: "POST",
-      headers: {
-        Accept: "application/json",
-        "Content-Type": "application/json",
-        "X-Requested-With": "XMLHttpRequest",
-        ...(resolveAuth(req) ? { Authorization: resolveAuth(req)! } : {}),
-      },
-      body: typeof body === "string" ? body : JSON.stringify(body),
-      cache: "no-store",
-    });
-
-    const data =
-      (await res
-        .clone()
-        .json()
-        .catch(async () => await res.clone().text())) ?? {};
-
-    return new NextResponse(
-      typeof data === "string" ? data : JSON.stringify(data),
-      { status: res.status || 200, headers: noStore }
-    );
-  } catch (e: any) {
-    return NextResponse.json(
-      { status: "error", message: e?.message || "Failed to create user" },
-      { status: 500, headers: noStore }
-    );
-  }
+  const txt = await res.text().catch(() => "");
+  return new Response(txt || "{}", { status: res.status, headers: noStoreHeaders });
 }

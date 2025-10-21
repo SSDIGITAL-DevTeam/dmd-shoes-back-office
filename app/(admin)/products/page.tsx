@@ -102,6 +102,26 @@ function categoryNameFromProduct(item: any, catMap: Record<number, string>): str
   return item?.category_slug || "-";
 }
 
+/** Sorter konsisten untuk "All" (desc by updated_at/created_at/id) */
+function toTime(v: any): number {
+  const t =
+    v?.updated_at || v?.updatedAt || v?.created_at || v?.createdAt || null;
+  const n = t ? Date.parse(t) : NaN;
+  return Number.isNaN(n) ? 0 : n;
+}
+function toIdNum(v: any): number {
+  const id = v?.id;
+  if (typeof id === "number") return id;
+  const n = Number(id);
+  return Number.isFinite(n) ? n : 0;
+}
+function sortDescAll(a: any, b: any) {
+  const ta = toTime(a);
+  const tb = toTime(b);
+  if (ta !== tb) return tb - ta; // newer first
+  return toIdNum(b) - toIdNum(a); // bigger id first
+}
+
 /** ======================
  *  Komponen Utama
  *  ====================== */
@@ -128,27 +148,38 @@ export default function ProductsPage() {
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const debouncedSearch = useDebounce(searchValue, 500);
 
-  /** 1) Load kategori sekali (status=all; per_page besar) */
+  /** 1) Load kategori sekali
+   *    Coba /product-categories?per_page=1000
+   *    Kalau gagal → fallback /categories?per_page=1000
+   *    (tanpa status=all supaya tidak 404)
+   */
   useEffect(() => {
     let mounted = true;
     (async () => {
+      async function tryFetch(url: string) {
+        return api.get<any>(url, { params: { per_page: 1000 } });
+      }
       try {
-        const res = await api.get<{
-          status?: string;
-          data?: ApiCategory[];
-          meta?: { total?: number };
-        }>("/categories", { params: { status: "all", per_page: 1000 } });
-
+        let list: ApiCategory[] = [];
+        try {
+          // primary
+          const res1 = await tryFetch("/product-categories");
+          const raw1 = (res1 as any)?.data ?? res1;
+          list = Array.isArray(raw1?.data) ? raw1.data : Array.isArray(raw1) ? raw1 : [];
+        } catch {
+          // fallback
+          const res2 = await tryFetch("/categories");
+          const raw2 = (res2 as any)?.data ?? res2;
+          list = Array.isArray(raw2?.data) ? raw2.data : Array.isArray(raw2) ? raw2 : [];
+        }
         if (!mounted) return;
-
-        const list = Array.isArray(res?.data) ? res.data : Array.isArray((res as any)?.data?.data) ? (res as any).data.data : [];
         const map: Record<number, string> = {};
-        list.forEach((c: ApiCategory | null | undefined) => {
+        (list as ApiCategory[]).forEach((c) => {
           if (c && typeof c.id === "number") map[c.id] = toCategoryText(c);
         });
         setCatMap(map);
       } catch {
-        setCatMap({});
+        if (mounted) setCatMap({});
       }
     })();
     return () => {
@@ -157,7 +188,7 @@ export default function ProductsPage() {
   }, []);
 
   /** 2) Ambil produk:
-   *  - all      -> active + inactive, gabung & virtual paginate
+   *  - all      -> gabung active + inactive (TANPA status=all), sort, paginate virtual
    *  - active   -> 1 request
    *  - inactive -> 1 request
    */
@@ -172,7 +203,7 @@ export default function ProductsPage() {
         const q = debouncedSearch || undefined;
 
         if (statusFilter === "all") {
-          // ambil 2 status, gabung, paginate virtual
+          // --- Gabung kedua status lalu paginate virtual ---
           const take = Math.max(page, 1) * pageSize;
 
           const [resActive, resInactive] = await Promise.all([
@@ -184,7 +215,8 @@ export default function ProductsPage() {
 
           const a = Array.isArray(resActive?.data) ? resActive.data : [];
           const b = Array.isArray(resInactive?.data) ? resInactive.data : [];
-          const combined = [...a, ...b];
+
+          const combinedSorted = [...a, ...b].sort(sortDescAll);
 
           const totalActive = resActive?.meta?.total ?? a.length;
           const totalInactive = resInactive?.meta?.total ?? b.length;
@@ -195,7 +227,7 @@ export default function ProductsPage() {
           const start = (currentPage - 1) * pageSize;
           const end = start + pageSize;
 
-          setRows(combined.slice(start, end));
+          setRows(combinedSorted.slice(start, end));
           setMeta({
             current_page: currentPage,
             per_page: pageSize,
@@ -214,13 +246,17 @@ export default function ProductsPage() {
           if (!mounted) return;
 
           const list = Array.isArray(res?.data) ? res.data : [];
+          const total = res?.meta?.total ?? list.length;
+
           setRows(list);
-          setMeta(res?.meta ?? {
-            current_page: page,
-            per_page: pageSize,
-            total: list.length,
-            last_page: Math.max(1, Math.ceil((res?.meta?.total ?? list.length) / pageSize)),
-          } as any);
+          setMeta(
+            res?.meta ?? {
+              current_page: page,
+              per_page: pageSize,
+              total,
+              last_page: Math.max(1, Math.ceil(total / pageSize)),
+            }
+          );
         }
       } catch (err: any) {
         if (!mounted) return;
@@ -304,31 +340,29 @@ export default function ProductsPage() {
   }, [pageSize]);
 
   const handleCreate = () => router.push("/products/create");
-  const handleEdit = (id: number | string) => router.push(`/products/edit/${id}`);
+  const handleEdit = (id: number | string) => router.push(`/products/${id}/edit`);
 
   const refetchAfterDelete = async () => {
-    // panggil ulang sesuai status filter terpilih
+    const q = debouncedSearch || undefined;
     if (statusFilter === "all") {
       const take = Math.max(page, 1) * pageSize;
-      const q = debouncedSearch || undefined;
       const [resActive, resInactive] = await Promise.all([
         listProducts({ page: 1, perPage: take, search: q, status: "active" as any }),
         listProducts({ page: 1, perPage: take, search: q, status: "inactive" as any }),
       ]);
       const a = Array.isArray(resActive?.data) ? resActive.data : [];
       const b = Array.isArray(resInactive?.data) ? resInactive.data : [];
-      const combined = [...a, ...b];
-
       const totalActive = resActive?.meta?.total ?? a.length;
       const totalInactive = resInactive?.meta?.total ?? b.length;
       const totalItems = totalActive + totalInactive;
 
+      const combinedSorted = [...a, ...b].sort(sortDescAll);
       const lastPage = Math.max(1, Math.ceil(totalItems / pageSize));
       const currentPage = Math.min(Math.max(page, 1), lastPage);
       const start = (currentPage - 1) * pageSize;
       const end = start + pageSize;
 
-      setRows(combined.slice(start, end));
+      setRows(combinedSorted.slice(start, end));
       setMeta({
         current_page: currentPage,
         per_page: pageSize,
@@ -336,7 +370,6 @@ export default function ProductsPage() {
         last_page: lastPage,
       } as any);
     } else {
-      const q = debouncedSearch || undefined;
       const res = await listProducts({
         page,
         perPage: pageSize,
@@ -344,13 +377,16 @@ export default function ProductsPage() {
         status: statusFilter as any,
       });
       const list = Array.isArray(res?.data) ? res.data : [];
+      const total = res?.meta?.total ?? list.length;
       setRows(list);
-      setMeta(res?.meta ?? {
-        current_page: page,
-        per_page: pageSize,
-        total: list.length,
-        last_page: Math.max(1, Math.ceil((res?.meta?.total ?? list.length) / pageSize)),
-      } as any);
+      setMeta(
+        res?.meta ?? {
+          current_page: page,
+          per_page: pageSize,
+          total,
+          last_page: Math.max(1, Math.ceil(total / pageSize)),
+        }
+      );
     }
   };
 
@@ -580,7 +616,7 @@ export default function ProductsPage() {
                 page={meta?.current_page ?? page}
                 pageSize={meta?.per_page ?? pageSize}
                 onPageChange={setPage}
-                onPageSizeChange={setPageSize}  
+                onPageSizeChange={setPageSize}
                 pageSizeOptions={pageSizeOptions}
               />
             </div>
