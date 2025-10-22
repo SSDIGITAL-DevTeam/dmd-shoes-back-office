@@ -1,6 +1,17 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  // Configuration options here
-}
+  images: {
+    remotePatterns: [
+      // Laravel local storage
+      { protocol: 'http', hostname: '127.0.0.1', port: '8000', pathname: '/storage/**' },
+      { protocol: 'http', hostname: 'localhost', port: '8000', pathname: '/storage/**' },
 
-module.exports = nextConfig
+      // kalau kamu juga pakai pexels (sesuai data contoh)
+      { protocol: 'https', hostname: 'images.pexels.com', pathname: '/photos/**' },
+    ],
+    // atau sementara bisa pakai:
+    // unoptimized: true, // (bypass optimizer Next — cepat buat ngetes)
+  },
+};
+
+module.exports = nextConfig;

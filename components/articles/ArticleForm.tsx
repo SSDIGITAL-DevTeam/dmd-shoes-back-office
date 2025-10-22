@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useMemo, useRef, useState } from "react";
+import React, { useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { TinyMCEEditor } from "@/components/common/TinyMCEEditor";
@@ -11,36 +11,23 @@ import { Toast } from "@/components/ui/Toast";
 type Props = {
   mode: "add" | "edit";
   initial?: Partial<Article>;
+  idForEdit?: string | number;
   showDelete?: boolean;
 };
 
-export const ArticleForm: React.FC<Props> = ({ mode, initial, showDelete }) => {
+export const ArticleForm: React.FC<Props> = ({ mode, initial, showDelete, idForEdit }) => {
   const router = useRouter();
-  const { state, actions } = useArticleForm(initial);
+  const { state, actions } = useArticleForm({ mode, idForEdit, initial });
   const [toast, setToast] = useState<{ show: boolean; msg: string; variant?: "success" | "error" }>({ show: false, msg: "" });
   const [newTag, setNewTag] = useState("");
 
-  const titleError = useMemo(() => (state.title.trim().length === 0 ? "Title wajib diisi" : ""), [state.title]);
+  // 🔽 NEW: language switcher for inputs
+  const [language, setLanguage] = useState<"id" | "en">("en");
 
-  const onTagKey = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === "Enter") {
-      e.preventDefault();
-      actions.addTag(newTag);
-      setNewTag("");
-    }
-  };
-
-  const onDropCover: React.DragEventHandler<HTMLLabelElement> = (e) => {
-    e.preventDefault();
-    if (!e.dataTransfer.files?.length) return;
-    const file = e.dataTransfer.files[0];
-    if (file) actions.onPickCover(file);
-  };
-
-  const onPickFile: React.ChangeEventHandler<HTMLInputElement> = (e) => {
-    const file = e.target.files?.[0];
-    if (file) actions.onPickCover(file);
-  };
+  const titleError = useMemo(() => {
+    const t = state.title[language]?.trim() || "";
+    return t.length === 0 ? `Title (${language.toUpperCase()}) wajib diisi` : "";
+  }, [state.title, language]);
 
   const onCancel = () => {
     if (state.dirty && !confirm("Perubahan belum disimpan. Yakin ingin keluar?")) return;
@@ -52,15 +39,24 @@ export const ArticleForm: React.FC<Props> = ({ mode, initial, showDelete }) => {
       setToast({ show: true, msg: titleError, variant: "error" });
       return;
     }
-    await actions.submitPublish();
-    setToast({ show: true, msg: mode === "add" ? "Artikel berhasil dipublish" : "Perubahan tersimpan", variant: "success" });
-  };
-  const onDraft = async () => {
-    await actions.submitDraft();
-    setToast({ show: true, msg: "Draft tersimpan", variant: "success" });
+    try {
+      await actions.submitPublish();
+      // langsung balik ke list + query untuk toast
+      router.replace("/articles?msg=published");
+    } catch (e: any) {
+      setToast({ show: true, msg: e?.message || "Gagal publish artikel", variant: "error" });
+    }
   };
 
-  // util class untuk input
+  const onDraft = async () => {
+    try {
+      await actions.submitDraft();
+      router.replace("/articles?msg=draft");
+    } catch (e: any) {
+      setToast({ show: true, msg: e?.message || "Gagal menyimpan draft", variant: "error" });
+    }
+  };
+
   const inputCls = "w-full rounded-md border border-gray-300 px-3 py-2 text-sm text-black placeholder:text-gray-400";
   const titleCls = "w-full rounded-md border px-3 py-2 text-xl font-medium text-black";
   const selectCls = "w-full rounded-md border border-gray-300 px-3 py-2 text-sm text-black";
@@ -76,30 +72,41 @@ export const ArticleForm: React.FC<Props> = ({ mode, initial, showDelete }) => {
           <span className="mx-2 text-gray-300">›</span>
           <span className="text-gray-600">{mode === "add" ? "Add" : "Edit"}</span>
         </div>
-        {showDelete && (
-          <DeleteButton aria-label="Delete Article">Delete</DeleteButton>
-        )}
+
+        <div className="flex items-center gap-2">
+          {/* 🔽 NEW: Language selector (mirip products page) */}
+          <label className="text-sm text-gray-600">Language:</label>
+          <select
+            value={language}
+            onChange={(e) => setLanguage(e.target.value as "id" | "en")}
+            className="px-3 py-2 border border-gray-300 rounded-lg text-sm text-black"
+          >
+            <option value="id">🇮🇩 Indonesia</option>
+            <option value="en">🇬🇧 English</option>
+          </select>
+
+          {showDelete && <DeleteButton aria-label="Delete Article">Delete</DeleteButton>}
+        </div>
       </div>
 
       <h1 className="mb-4 text-2xl font-semibold text-gray-900">{mode === "add" ? "Add Article" : "Edit Article"}</h1>
 
       <div className="grid grid-cols-1 gap-6 md:grid-cols-3">
-        {/* Left column: Post form */}
+        {/* Left column */}
         <div className="md:col-span-2">
           <div className="rounded-xl border border-gray-200 bg-white shadow-sm">
             <div className="border-b border-gray-200 px-6 py-4">
               <h2 className="text-base font-medium text-gray-900">Post</h2>
             </div>
             <div className="px-6 py-6 space-y-4">
-              {/* Title */}
+              {/* Title bilingual */}
               <div>
-                <label htmlFor="title" className="mb-2 block text-sm font-medium text-gray-700">Title</label>
+                <label className="mb-2 block text-sm font-medium text-gray-700">Title ({language.toUpperCase()})</label>
                 <input
-                  id="title"
                   aria-label="Title"
-                  placeholder="Masukkan judul artikel..."
-                  value={state.title}
-                  onChange={(e) => actions.setTitle(e.target.value)}
+                  placeholder={language === "id" ? "Masukkan judul (Indonesia)..." : "Enter title (English)..."}
+                  value={state.title[language] || ""}
+                  onChange={(e) => actions.setTitle(language, e.target.value)}
                   className={`${titleCls} ${titleError ? "border-red-500" : "border-gray-300"}`}
                 />
                 {titleError && <p className="mt-1 text-xs text-red-600">{titleError}</p>}
@@ -117,33 +124,18 @@ export const ArticleForm: React.FC<Props> = ({ mode, initial, showDelete }) => {
                 />
               </div>
 
-              {/* Category (optional) */}
+              {/* Description bilingual */}
               <div>
-                <label htmlFor="category" className="mb-2 block text-sm font-medium text-gray-700">Category</label>
-                <select
-                  id="category"
-                  aria-label="Category"
-                  value={state.category}
-                  onChange={(e) => actions.setCategory(e.target.value)}
-                  className={selectCls}
-                >
-                  <option value="">- Choose -</option>
-                  <option value="Teknologi">Teknologi</option>
-                  <option value="Desain">Desain</option>
-                  <option value="Bisnis">Bisnis</option>
-                </select>
-              </div>
-
-              {/* Description / Content (TinyMCE) */}
-              <div>
-                <label className="mb-2 block text-sm font-medium text-gray-700">Description</label>
+                <label className="mb-2 block text-sm font-medium text-gray-700">
+                  Description ({language === "id" ? "Indonesia" : "English"})
+                </label>
                 <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-2">
                   <TinyMCEEditor
-                    value={state.content}
-                    onChange={actions.setContent}
-                    placeholder="Tulis artikel Anda di sini…"
-                    autosaveKey={`article:${mode}:content`}
-                    // pastikan komponen TinyMCEEditor meneruskan ini ke init.content_style
+                    // pakai value sesuai language
+                    value={state.content[language] || ""}
+                    onChange={(html) => actions.setContent(language, html)}
+                    placeholder={language === "id" ? "Tulis artikel (Indonesia)…" : "Write your article (English)…"}
+                    autosaveKey={`article:${mode}:content:${language}`}
                     contentStyle={`body{color:#111827} p,li,div,span{color:#111827}`}
                   />
                 </div>
@@ -152,7 +144,7 @@ export const ArticleForm: React.FC<Props> = ({ mode, initial, showDelete }) => {
           </div>
         </div>
 
-        {/* Right column: Side panel */}
+        {/* Right column */}
         <div className="space-y-6">
           {/* Cover */}
           <div className="rounded-xl border border-gray-200 bg-white shadow-sm">
@@ -163,13 +155,7 @@ export const ArticleForm: React.FC<Props> = ({ mode, initial, showDelete }) => {
               {state.coverUrl ? (
                 <div className="relative">
                   <img src={state.coverUrl} alt="cover preview" className="w-full rounded-lg object-cover" />
-                  <button
-                    aria-label="Remove cover"
-                    onClick={actions.clearCover}
-                    className="absolute left-2 top-2 rounded-full bg-black/80 p-1 text-white hover:bg-black"
-                  >
-                    ×
-                  </button>
+                  <button aria-label="Remove cover" onClick={actions.clearCover} className="absolute left-2 top-2 rounded-full bg-black/80 p-1 text-white hover:bg-black">×</button>
                 </div>
               ) : (
                 <label
@@ -184,7 +170,7 @@ export const ArticleForm: React.FC<Props> = ({ mode, initial, showDelete }) => {
             </div>
           </div>
 
-          {/* Tags */}
+          {/* Tags (chip) */}
           <div className="rounded-xl border border-gray-200 bg-white shadow-sm">
             <div className="border-b border-gray-200 px-6 py-4">
               <h2 className="text-base font-medium text-gray-900">Tags</h2>
@@ -215,37 +201,32 @@ export const ArticleForm: React.FC<Props> = ({ mode, initial, showDelete }) => {
             </div>
           </div>
 
-          {/* SEO */}
+          {/* SEO bilingual */}
           <div className="rounded-xl border border-gray-200 bg-white shadow-sm">
             <div className="border-b border-gray-200 px-6 py-4">
               <h2 className="text-base font-medium text-gray-900">SEO</h2>
             </div>
             <div className="px-6 py-4 space-y-4">
               <div>
-                <label className="mb-2 block text-sm font-medium text-gray-700">Tags</label>
-                <input
-                  aria-label="SEO Tags"
-                  value={state.seoTags}
-                  onChange={(e) => actions.setSeoTags(e.target.value)}
-                  className={inputCls}
-                />
-              </div>
-              <div>
-                <label className="mb-2 block text-sm font-medium text-gray-700">Keyword</label>
+                <label className="mb-2 block text-sm font-medium text-gray-700">
+                  Keyword ({language.toUpperCase()})
+                </label>
                 <input
                   aria-label="SEO Keyword"
-                  value={state.keyword}
-                  onChange={(e) => actions.setKeyword(e.target.value)}
+                  value={state.seo.keyword[language] || ""}
+                  onChange={(e) => actions.setSeoKeyword(language, e.target.value)}
                   className={inputCls}
                 />
               </div>
               <div>
-                <label className="mb-2 block text-sm font-medium text-gray-700">Description</label>
+                <label className="mb-2 block text-sm font-medium text-gray-700">
+                  Description ({language.toUpperCase()})
+                </label>
                 <textarea
                   aria-label="SEO Description"
                   rows={4}
-                  value={state.seoDescription}
-                  onChange={(e) => actions.setSeoDescription(e.target.value)}
+                  value={state.seo.description[language] || ""}
+                  onChange={(e) => actions.setSeoDescription(language, e.target.value)}
                   className={`${inputCls} resize-none`}
                 />
               </div>

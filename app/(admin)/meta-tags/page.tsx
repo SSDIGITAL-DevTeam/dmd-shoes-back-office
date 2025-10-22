@@ -1,22 +1,33 @@
 "use client";
 
-import React, { useState } from "react";
+import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
+import type { MetaPage } from "@/services/meta.service";
+import { getPages } from "@/services/meta.service";
 import { EditButton } from "@/components/ui/EditIcon";
 
-// Sample pages data
-const samplePages = [
-  { id: 1, name: "Beranda" },
-  { id: 2, name: "Tentang Kami" },
-  { id: 3, name: "Kontak Kami" },
-];
-
 export default function MetaTagsPage() {
-  const [pages] = useState(samplePages);
+  const [pages, setPages] = useState<MetaPage[]>([]);
+  const [loading, setLoading] = useState(true);
+  const router = useRouter();
 
-  const handleEdit = (id: number, name: string) => {
-    console.log("Edit meta tags for:", name);
-    // Navigate to detail page with page name as query parameter
-    window.location.href = `/meta-tags/detail?page=${encodeURIComponent(name)}`;
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await getPages();
+        setPages(res.data || []);
+      } finally {
+        setLoading(false);
+      }
+    })();
+  }, []);
+
+  const handleEdit = (page: MetaPage) => {
+    router.push(
+      `/meta-tags/${page.id}?name=${encodeURIComponent(page.name)}&slug=${encodeURIComponent(
+        page.slug
+      )}`
+    );
   };
 
   return (
@@ -41,13 +52,15 @@ export default function MetaTagsPage() {
       <div className="bg-gray-50">
         <div className="px-6 py-6">
           <div className="rounded-xl border border-gray-200 bg-white shadow-sm">
-            {/* Table */}
             <div className="overflow-x-auto">
               <table className="min-w-full divide-y divide-gray-200">
                 <thead className="bg-gray-50">
                   <tr>
                     <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
                       Name
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
+                      Slug
                     </th>
                     <th className="px-6 py-3 text-right text-xs font-medium uppercase tracking-wider text-gray-500">
                       Actions
@@ -56,23 +69,33 @@ export default function MetaTagsPage() {
                 </thead>
 
                 <tbody className="bg-white divide-y divide-gray-200">
-                  {pages.map((page) => (
-                    <tr key={page.id} className="hover:bg-gray-50">
-                      {/* Name */}
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        <div className="text-sm font-medium text-gray-900">
-                          {page.name}
-                        </div>
-                      </td>
-
-                      {/* Actions */}
-                      <td className="px-6 py-4 whitespace-nowrap text-right">
-                        <EditButton 
-                          onClick={() => handleEdit(page.id, page.name)}
-                        />
+                  {loading ? (
+                    <tr>
+                      <td className="px-6 py-8 text-sm" colSpan={3}>
+                        Loading…
                       </td>
                     </tr>
-                  ))}
+                  ) : pages.length === 0 ? (
+                    <tr>
+                      <td className="px-6 py-8 text-sm" colSpan={3}>
+                        No pages
+                      </td>
+                    </tr>
+                  ) : (
+                    pages.map((page) => (
+                      <tr key={page.id} className="hover:bg-gray-50">
+                        <td className="px-6 py-4 whitespace-nowrap">
+                          <div className="text-sm font-medium text-gray-900">{page.name}</div>
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap">
+                          <div className="text-sm text-gray-900">{page.slug}</div>
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-right">
+                          <EditButton onClick={() => handleEdit(page)} />
+                        </td>
+                      </tr>
+                    ))
+                  )}
                 </tbody>
               </table>
             </div>

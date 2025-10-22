@@ -1,59 +1,60 @@
-// components/ToggleSwitch.tsx
+// components/ui/ToggleSwitch.tsx
 "use client";
 import React from "react";
+import clsx from "clsx";
 
-interface ToggleSwitchProps {
+export type ToggleSwitchProps = Omit<
+  React.InputHTMLAttributes<HTMLInputElement>,
+  "onChange" | "checked"
+> & {
   checked: boolean;
-  onChange: (value: boolean) => void;
-  activeColor?: string;     // default hijau
-  inactiveColor?: string;   // default abu-abu
-  size?: 'sm' | 'md' | 'lg'; // responsive sizing
-}
-
-const ToggleSwitch: React.FC<ToggleSwitchProps> = ({
-  checked,
-  onChange,
-  activeColor = "#16A34A",    // hijau tailwind: green-600
-  inactiveColor = "#9CA3AF",  // abu tailwind: gray-400
-  size = 'md'
-}) => {
-  // Responsive sizing classes
-  const sizeClasses = {
-    sm: 'h-4 w-8',
-    md: 'h-6 w-12',
-    lg: 'h-8 w-16'
-  };
-
-  const knobSizeClasses = {
-    sm: 'h-3 w-3',
-    md: 'h-5 w-5', 
-    lg: 'h-7 w-7'
-  };
-
-  const translateDistance = {
-    sm: 'translateX(100%)',
-    md: 'translateX(120%)',
-    lg: 'translateX(114%)'
-  };
-  return (
-    <button
-      type="button"
-      onClick={() => onChange(!checked)}
-      className={`relative inline-flex cursor-pointer items-center rounded-full transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 ${sizeClasses[size]}`}
-      style={{
-        backgroundColor: checked ? activeColor : inactiveColor,
-      }}
-      aria-pressed={checked}
-      aria-label={checked ? "Turn off" : "Turn on"}
-    >
-      <span
-        className={`inline-block transform rounded-full bg-white shadow-md transition-all duration-200 ${knobSizeClasses[size]}`}
-        style={{
-          transform: checked ? translateDistance[size] : "translateX(0%)",
-        }}
-      />
-    </button>
-  );
+  onChange: (checked: boolean) => void;
+  label?: string;
+  className?: string;
 };
 
-export default ToggleSwitch;
+export default function ToggleSwitch({
+  checked,
+  onChange,
+  disabled,
+  label,
+  className,
+  ...rest
+}: ToggleSwitchProps) {
+  return (
+    <label
+      className={clsx(
+        "inline-flex items-center gap-2 select-none",
+        disabled ? "opacity-50 cursor-not-allowed" : "cursor-pointer",
+        className
+      )}
+    >
+      <input
+        type="checkbox"
+        className="sr-only"
+        checked={checked}
+        disabled={disabled}
+        onChange={(e) => {
+          if (disabled) return;
+          onChange(e.target.checked);
+        }}
+        {...rest} // termasuk aria-busy, aria-label, data-*, dll
+      />
+      <span
+        aria-hidden="true"
+        className={clsx(
+          "relative inline-flex h-6 w-11 rounded-full transition-colors",
+          checked ? "bg-green-500" : "bg-gray-300"
+        )}
+      >
+        <span
+          className={clsx(
+            "pointer-events-none absolute top-0.5 h-5 w-5 rounded-full bg-white transition-transform",
+            checked ? "translate-x-6" : "translate-x-0.5"
+          )}
+        />
+      </span>
+      {label ? <span className="text-sm text-gray-700">{label}</span> : null}
+    </label>
+  );
+}

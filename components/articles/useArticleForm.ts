@@ -1,19 +1,30 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  createArticle,
+  updateArticle,
+  type ArticleJsonPayload,
+  type ArticleMultipartPayload,
+  type LangPair,
+} from "@/services/articles.service";
 
 export type Article = {
   id?: number;
-  title: string;
   slug: string;
-  content: string; // CKEditor HTML output
-  category?: string;
-  coverUrl?: string; // preview or remote url
+
+  // bilingual
+  title: { id?: string | null; en?: string | null };
+  content: { id?: string | null; en?: string | null };
+
+  // cover
+  coverUrl?: string;
+
+  // tags + SEO bilingual
   tags: string[];
   seo: {
-    tags?: string;
-    keyword?: string;
-    description?: string;
+    keyword: { id?: string | null; en?: string | null };
+    description: { id?: string | null; en?: string | null };
   };
 };
 
@@ -26,31 +37,56 @@ export function kebabCase(input: string) {
     .replace(/-+/g, "-");
 }
 
-export function useArticleForm(initial?: Partial<Article>) {
-  const [title, setTitle] = useState(initial?.title ?? "");
-  const [slug, setSlug] = useState(initial?.slug ?? "");
-  const [content, setContent] = useState<string>(initial?.content ?? "");
-  const [category, setCategory] = useState(initial?.category ?? "");
-  const [coverUrl, setCoverUrl] = useState<string | undefined>(initial?.coverUrl);
+type UseArticleFormOptions = {
+  mode?: "add" | "edit";
+  idForEdit?: string | number;
+  initial?: Partial<Article>;
+};
+
+export function useArticleForm(opts?: UseArticleFormOptions) {
+  const mode = opts?.mode ?? "add";
+
+  // bilingual states
+  const [title, setTitleState] = useState<Article["title"]>({
+    id: opts?.initial?.title?.id ?? "",
+    en: opts?.initial?.title?.en ?? "",
+  });
+  const [content, setContentState] = useState<Article["content"]>({
+    id: opts?.initial?.content?.id ?? "",
+    en: opts?.initial?.content?.en ?? "",
+  });
+
+  const [slug, setSlug] = useState(opts?.initial?.slug ?? "");
+  const [coverUrl, setCoverUrl] = useState<string | undefined>(opts?.initial?.coverUrl);
   const [coverFile, setCoverFile] = useState<File | null>(null);
-  const [tags, setTags] = useState<string[]>(initial?.tags ?? []);
-  const [seoTags, setSeoTags] = useState(initial?.seo?.tags ?? "");
-  const [keyword, setKeyword] = useState(initial?.seo?.keyword ?? "");
-  const [seoDescription, setSeoDescription] = useState(initial?.seo?.description ?? "");
+
+  const [tags, setTags] = useState<string[]>(opts?.initial?.tags ?? []);
+
+  const [seoKeyword, setSeoKeywordState] = useState<Article["seo"]["keyword"]>({
+    id: opts?.initial?.seo?.keyword?.id ?? "",
+    en: opts?.initial?.seo?.keyword?.en ?? "",
+  });
+  const [seoDescription, setSeoDescriptionState] = useState<Article["seo"]["description"]>({
+    id: opts?.initial?.seo?.description?.id ?? "",
+    en: opts?.initial?.seo?.description?.en ?? "",
+  });
+
   const [submitting, setSubmitting] = useState(false);
   const [dirty, setDirty] = useState(false);
 
-  // Auto slug from title (editable)
-  useEffect(() => {
-    if (!dirty || !title) return;
-  }, [title, dirty]);
+  // track manual slug
+  const manualSlugRef = useRef(false);
+  const markSlugManual = useCallback((v: string) => {
+    manualSlugRef.current = true;
+    setSlug(v);
+  }, []);
 
+  // auto slug dari title.id (prioritas ID)
   useEffect(() => {
-    // Make slug follow title until user edits slug manually
-    if (!initial?.slug || slug === "" || slug === kebabCase(initial?.title ?? "")) {
-      setSlug(kebabCase(title));
+    if (!manualSlugRef.current) {
+      const seed = (title.id ?? "") || (title.en ?? "") || "";
+      setSlug(kebabCase(seed));
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [title]);
 
   // before unload guard
@@ -68,8 +104,9 @@ export function useArticleForm(initial?: Partial<Article>) {
   // mark dirty on any change
   useEffect(() => {
     setDirty(true);
-  }, [title, slug, content, category, coverUrl, tags, seoTags, keyword, seoDescription]);
+  }, [title, content, slug, coverUrl, tags, seoKeyword, seoDescription]);
 
+  // tag helpers
   const addTag = (t: string) => {
     const v = t.trim();
     if (!v) return;
@@ -77,6 +114,7 @@ export function useArticleForm(initial?: Partial<Article>) {
   };
   const removeTag = (t: string) => setTags((prev) => prev.filter((x) => x !== t));
 
+  // cover helpers
   const onPickCover = (file: File) => {
     setCoverFile(file);
     const url = URL.createObjectURL(file);
@@ -87,57 +125,111 @@ export function useArticleForm(initial?: Partial<Article>) {
     setCoverUrl(undefined);
   };
 
-  async function fakeApi(delay = 900) {
-    await new Promise((r) => setTimeout(r, delay));
+  // setters bilingual untuk UI
+  const setTitle = (lang: "id" | "en", val: string) =>
+    setTitleState((p) => ({ ...p, [lang]: val }));
+  const setContent = (lang: "id" | "en", val: string) =>
+    setContentState((p) => ({ ...p, [lang]: val }));
+  const setSeoKeyword = (lang: "id" | "en", val: string) =>
+    setSeoKeywordState((p) => ({ ...p, [lang]: val }));
+  const setSeoDescription = (lang: "id" | "en", val: string) =>
+    setSeoDescriptionState((p) => ({ ...p, [lang]: val }));
+
+  // utils
+  function nn(v?: string | null): string | null {
+    const s = (v ?? "").trim();
+    return s === "" ? null : s;
   }
 
-  const buildPayload = (): Article => ({
-    title,
-    slug,
-    content,
-    category,
-    coverUrl,
-    tags,
-    seo: { tags: seoTags, keyword, description: seoDescription },
-  });
+  // payload builders
+  function buildJsonPayload(status: "publish" | "draft"): ArticleJsonPayload {
+    const published = status === "publish";
+    const titlePair: LangPair = { id: nn(title.id) ?? "", en: nn(title.en) };
+    const contentPair: LangPair = { id: nn(content.id) ?? "", en: nn(content.en) };
 
-  const submitPublish = async () => {
+    return {
+      title: titlePair,
+      content: contentPair,
+      status,
+      published,
+      slug: nn(slug),
+      // SEO:
+      seo_keyword: { id: nn(seoKeyword.id), en: nn(seoKeyword.en) },
+      seo_description: { id: nn(seoDescription.id), en: nn(seoDescription.en) },
+      seo_tags: tags.length ? tags : null,
+      // gunakan cover_url jika tidak upload file DAN sudah http(s)
+      cover_url:
+        coverFile ? undefined : coverUrl && coverUrl.startsWith("http") ? coverUrl : undefined,
+    };
+  }
+
+  function buildMultipartPayload(status: "publish" | "draft"): ArticleMultipartPayload | null {
+    if (!coverFile) return null;
+    const published = status === "publish";
+    const titlePair: LangPair = { id: nn(title.id) ?? "", en: nn(title.en) };
+    const contentPair: LangPair = { id: nn(content.id) ?? "", en: nn(content.en) };
+
+    return {
+      title: titlePair,
+      content: contentPair,
+      status,
+      published,
+      slug: nn(slug),
+      cover: coverFile,
+      seo_keyword: { id: nn(seoKeyword.id), en: nn(seoKeyword.en) },
+      seo_description: { id: nn(seoDescription.id), en: nn(seoDescription.en) },
+      seo_tags: tags.length ? tags : null,
+    };
+  }
+
+  const submit = async (status: "publish" | "draft") => {
     setSubmitting(true);
     try {
-      await fakeApi();
+      let result;
+      if (mode === "add") {
+        if (coverFile) {
+          result = await createArticle(buildMultipartPayload(status)!);
+        } else {
+          result = await createArticle(buildJsonPayload(status));
+        }
+      } else {
+        if (!opts?.idForEdit) throw new Error("Missing id for edit");
+        if (coverFile) {
+          result = await updateArticle(opts.idForEdit, buildMultipartPayload(status)!);
+        } else {
+          result = await updateArticle(opts.idForEdit, buildJsonPayload(status));
+        }
+      }
       setDirty(false);
-      return buildPayload();
+      return result;
     } finally {
       setSubmitting(false);
     }
   };
-  const submitDraft = async () => submitPublish();
+
+  const submitPublish = () => submit("publish");
+  const submitDraft = () => submit("draft");
 
   return {
     state: {
       title,
-      slug,
       content,
-      category,
+      slug,
       coverUrl,
       tags,
-      seoTags,
-      keyword,
-      seoDescription,
+      seo: { keyword: seoKeyword, description: seoDescription },
       submitting,
       dirty,
     },
     actions: {
       setTitle,
-      setSlug,
+      setSlug: markSlugManual,
       setContent,
-      setCategory,
       onPickCover,
       clearCover,
       addTag,
       removeTag,
-      setSeoTags,
-      setKeyword,
+      setSeoKeyword,
       setSeoDescription,
       submitPublish,
       submitDraft,
