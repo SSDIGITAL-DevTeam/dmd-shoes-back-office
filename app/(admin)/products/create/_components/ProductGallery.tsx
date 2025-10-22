@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useRef } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 
 interface Gallery {
   id: number;
@@ -15,8 +15,7 @@ interface ProductGalleryProps {
   galleries: Gallery[];
   onAddGallery: () => void;
   onRemoveGallery: (id: number) => void;
-  onGalleryChange: (id: number, field: string, value: string) => void;
-  // onImageUpload: (e: React.ChangeEvent<HTMLInputElement>, id: number) => void;
+  onGalleryChange: (id: number, field: string, value: any) => void; // <- penting: izinkan File
 }
 
 export default function ProductGallery({
@@ -24,24 +23,84 @@ export default function ProductGallery({
   onAddGallery,
   onRemoveGallery,
   onGalleryChange,
-  // onImageUpload,
 }: ProductGalleryProps) {
+  /** Map preview object URL per item.id  */
   const [previews, setPreviews] = useState<Record<number, string>>({});
+  /** Simpan refs file input per item.id supaya bisa di-trigger klik */
   const fileInputs = useRef<Record<number, HTMLInputElement | null>>({});
 
+  /** Set berisi id yang ada saat ini, untuk mendeteksi item yang dihapus */
+  const currentIds = useMemo(() => new Set(galleries.map((g) => g.id)), [galleries]);
+
+  /** Cleanup previews untuk item yang sudah tidak ada lagi */
+  useEffect(() => {
+    setPreviews((prev) => {
+      const next = { ...prev };
+      for (const id of Object.keys(prev).map(Number)) {
+        if (!currentIds.has(id) && next[id]) {
+          URL.revokeObjectURL(next[id]);
+          delete next[id];
+        }
+      }
+      return next;
+    });
+    // juga bersihkan ref input yang tak terpakai
+    for (const id of Object.keys(fileInputs.current).map(Number)) {
+      if (!currentIds.has(id)) delete fileInputs.current[id];
+    }
+  }, [currentIds]);
+
+  /** Cleanup semua previews saat unmount komponen */
+  useEffect(() => {
+    return () => {
+      setPreviews((prev) => {
+        for (const url of Object.values(prev)) URL.revokeObjectURL(url);
+        return {};
+      });
+    };
+  }, []);
+
+  /** Handle upload & preview */
   const handlePreviewUpload = (e: React.ChangeEvent<HTMLInputElement>, id: number) => {
     const file = e.target.files?.[0];
     if (!file) return;
-  
-    const previewUrl = URL.createObjectURL(file);
-    setPreviews((prev) => ({ ...prev, [id]: previewUrl }));
-  
-    // panggil onGalleryChange khusus untuk file
-    onGalleryChange(id, "file", file as any); // kita pakai type any agar fleksibel
+
+    // Revoke preview lama untuk id ini (kalau ada)
+    setPreviews((prev) => {
+      const next = { ...prev };
+      if (next[id]) URL.revokeObjectURL(next[id]);
+      next[id] = URL.createObjectURL(file);
+      return next;
+    });
+
+    // Beritahu parent: simpan file + fileName ke state parent
+    onGalleryChange(id, "file", file);
+    onGalleryChange(id, "fileName", file.name || "image.jpg");
   };
 
+  /** Klik area preview = klik file input */
   const handleDivClick = (id: number) => {
     fileInputs.current[id]?.click();
+  };
+
+  /** Saat klik remove, pastikan revoke preview dan reset input */
+  const handleRemove = (id: number) => {
+    // Revoke object URL
+    setPreviews((prev) => {
+      if (prev[id]) {
+        URL.revokeObjectURL(prev[id]);
+        const { [id]: _removed, ...rest } = prev;
+        return rest;
+      }
+      return prev;
+    });
+    // Reset input file (kalau masih ada)
+    const inp = fileInputs.current[id];
+    if (inp) inp.value = "";
+    delete fileInputs.current[id];
+
+    // Panggil callback parent untuk benar-benar menghapus item
+    onRemoveGallery(id);
   };
 
   return (
@@ -57,9 +116,10 @@ export default function ProductGallery({
         </button>
       </div>
 
-      <div className="grid grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-6">
         {galleries.map((gallery) => {
-          const imageSrc = previews[gallery.id] || gallery.image;
+          const previewSrc = previews[gallery.id];
+          const imageSrc = previewSrc || gallery.image || "";
 
           return (
             <div key={gallery.id} className="space-y-3">
@@ -69,6 +129,7 @@ export default function ProductGallery({
                   onClick={() => handleDivClick(gallery.id)}
                 >
                   {imageSrc ? (
+                    // eslint-disable-next-line @next/next/no-img-element
                     <img
                       src={imageSrc}
                       alt={gallery.alt || "Preview"}
@@ -88,19 +149,18 @@ export default function ProductGallery({
                         stroke="currentColor"
                         strokeWidth={2}
                       >
-                        <path
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          d="M12 4v16m8-8H4"
-                        />
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
                       </svg>
                       <span>Upload Image</span>
-                </div>
+                    </div>
                   )}
 
-                  {/* Input file tersembunyi */}
+                  {/* Input file tersembunyi — kunci dengan key berbasis id agar re-mount */}
                   <input
-                    ref={(el) => { fileInputs.current[gallery.id] = el; }}
+                    key={gallery.id}
+                    ref={(el) => {
+                      fileInputs.current[gallery.id] = el;
+                    }}
                     type="file"
                     accept="image/png, image/jpeg, image/webp"
                     className="hidden"
@@ -108,15 +168,11 @@ export default function ProductGallery({
                   />
                 </div>
 
-                {imageSrc && (
-                  <div className="absolute top-1 left-1 right-1 flex items-center justify-between bg-black bg-opacity-50 text-white text-xs px-2 py-1 rounded">
+                {(imageSrc || gallery.fileName) && (
+                  <div className="absolute top-1 left-1 right-1 flex items-center justify-between bg-black/60 text-white text-xs px-2 py-1 rounded">
                     <div>
                       <div className="flex items-center gap-1">
-                        <svg
-                          className="w-3 h-3"
-                          fill="currentColor"
-                          viewBox="0 0 20 20"
-                        >
+                        <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
                           <path
                             fillRule="evenodd"
                             d="M3 4a1 1 0 011-1h12a1 1 0 011 1v12a1 1 0 01-1 1H4a1 1 0 01-1-1V4zm5 3a2 2 0 11-4 0 2 2 0 014 0zm7.5 7.5l-3-3-1.5 1.5-3-3L3 13.5V16h14v-1.5z"
@@ -125,11 +181,10 @@ export default function ProductGallery({
                         </svg>
                         <span>{gallery.fileName || "image.png"}</span>
                       </div>
-                      <div className="text-gray-300 text-xs">316 KB</div>
                     </div>
                     <button
                       type="button"
-                      onClick={() => onRemoveGallery(gallery.id)}
+                      onClick={() => handleRemove(gallery.id)}
                       className="text-white hover:text-red-300 ml-2"
                     >
                       ×
@@ -138,33 +193,25 @@ export default function ProductGallery({
                 )}
               </div>
 
-              {/* Input Title */}
+              {/* Title */}
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Title
-                </label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Title</label>
                 <input
                   type="text"
                   value={gallery.title}
-                  onChange={(e) =>
-                    onGalleryChange(gallery.id, "title", e.target.value)
-                  }
+                  onChange={(e) => onGalleryChange(gallery.id, "title", e.target.value)}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm text-black"
                   placeholder="Sneakers"
                 />
               </div>
 
-              {/* Input Alt */}
+              {/* Alt */}
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Alt Text
-                </label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Alt Text</label>
                 <input
                   type="text"
                   value={gallery.alt}
-                  onChange={(e) =>
-                    onGalleryChange(gallery.id, "alt", e.target.value)
-                  }
+                  onChange={(e) => onGalleryChange(gallery.id, "alt", e.target.value)}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm text-black"
                   placeholder="Slick formal sneaker shoes"
                 />

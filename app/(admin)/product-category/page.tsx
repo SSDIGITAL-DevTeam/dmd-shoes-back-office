@@ -9,7 +9,7 @@ import { Pagination } from "@/components/layout/Pagination";
 import { useRouter } from "next/navigation";
 
 type ParentFilter = "all" | "has-parent" | "no-parent";
-type SortDir = "asc" | "desc";
+type SortDir = "asc" | "desc"; // tetap dipertahankan kalau suatu saat butuh; tidak dipakai untuk created_at
 
 type ApiCategory = {
   id: number;
@@ -21,6 +21,10 @@ type ApiCategory = {
   cover?: string | null;
   cover_url?: string | null;
   parent_brief?: { id: number; slug: string; name?: { id?: string; en?: string } } | null;
+  created_at?: string;   // ⟵ tambahkan kemungkinan field waktu
+  createdAt?: string;    // ⟵ variasi penamaan
+  updated_at?: string;
+  updatedAt?: string;
 };
 
 const withNoCache = (url: string) => `${url}${url.includes("?") ? "&" : "?"}_=${Date.now()}`;
@@ -35,6 +39,25 @@ async function fetchJSON(input: string, init?: RequestInit) {
   return { ok: res.ok, status: res.status, data };
 }
 
+/** ===== Helpers sort by created DESC (terbaru dulu) ===== */
+const toTime = (c: Partial<ApiCategory>): number => {
+  const raw = c.created_at || c.createdAt || c.updated_at || c.updatedAt || null;
+  if (!raw) return 0;
+  const n = Date.parse(raw);
+  return Number.isNaN(n) ? 0 : n;
+};
+const toIdNum = (c: Partial<ApiCategory>): number => {
+  const n = Number(c.id);
+  return Number.isFinite(n) ? n : 0;
+};
+/** Sorter: created time desc, tie-breaker: id desc */
+const sortByNewest = (a: ApiCategory, b: ApiCategory) => {
+  const ta = toTime(a);
+  const tb = toTime(b);
+  if (ta !== tb) return tb - ta;           // newer first
+  return toIdNum(b) - toIdNum(a);          // bigger id first
+};
+
 export default function ProductCategoryPage() {
   const router = useRouter();
   const [categories, setCategories] = useState<ApiCategory[]>([]);
@@ -44,7 +67,7 @@ export default function ProductCategoryPage() {
   // filters
   const [query, setQuery] = useState("");
   const [parentFilter, setParentFilter] = useState<ParentFilter>("all");
-  const [sortDir, setSortDir] = useState<SortDir>("asc");
+  const [sortDir, setSortDir] = useState<SortDir>("asc"); // tetap ada tapi tidak mempengaruhi urutan created
 
   // pagination state
   const [currentPage, setCurrentPage] = useState(1);
@@ -55,9 +78,10 @@ export default function ProductCategoryPage() {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetchJSON(withNoCache(`/api/category?perPage=100&status=all`));
+      // Ambil semua (perPage besar) lalu sort di klien by created desc
+      const res = await fetchJSON(withNoCache(`/api/category?perPage=1000&status=all`));
       const data = res.data?.data ?? res.data ?? [];
-      setCategories(Array.isArray(data) ? data : []);
+      setCategories(Array.isArray(data) ? (data as ApiCategory[]) : []);
     } catch (e: any) {
       setError(e?.response?.data?.message || e?.message || "Failed to fetch categories");
     } finally {
@@ -82,6 +106,7 @@ export default function ProductCategoryPage() {
   const processed = useMemo(() => {
     let data = [...categories];
 
+    // search
     if (query.trim()) {
       const q = query.trim().toLowerCase();
       data = data.filter((c) => {
@@ -89,24 +114,20 @@ export default function ProductCategoryPage() {
           typeof c.name === "string"
             ? c.name
             : (c.name?.id || c.name_text || c.slug || c.name?.en || "");
-        return nameStr.toLowerCase().includes(q);
+        return (nameStr || "").toLowerCase().includes(q);
       });
     }
 
+    // parent filter
     if (parentFilter !== "all") {
       data = data.filter((c) => (parentFilter === "has-parent" ? c.parent_id != null : c.parent_id == null));
     }
 
-    data.sort((a, b) => {
-      const left =
-        (typeof a.name === "string" ? a.name : (a.name?.id || a.name_text || a.slug || ""))?.toLowerCase?.() || "";
-      const right =
-        (typeof b.name === "string" ? b.name : (b.name?.id || b.name_text || b.slug || ""))?.toLowerCase?.() || "";
-      return sortDir === "asc" ? left.localeCompare(right) : right.localeCompare(left);
-    });
+    // === POIN UTAMA: urutkan berdasarkan yang PALING BARU (created desc) ===
+    data.sort(sortByNewest);
 
     return data;
-  }, [categories, query, parentFilter, sortDir]);
+  }, [categories, query, parentFilter /* sortDir tidak digunakan untuk created */]);
 
   const totalItems = processed.length;
   const startIndex = (currentPage - 1) * itemsPerPage;
@@ -115,12 +136,11 @@ export default function ProductCategoryPage() {
 
   const handlePageChange = (p: number) => setCurrentPage(p);
   const handlePageSizeChange = (n: number) => { setItemsPerPage(n); setCurrentPage(1); };
-  React.useEffect(() => setCurrentPage(1), [query, parentFilter, sortDir]);
+  React.useEffect(() => setCurrentPage(1), [query, parentFilter]);
 
   const handleNewCategory = () => router.push("/product-category");
   const handleEdit = (id: number) => {
     router.push(`/product-category/edit/${id}`);
-    // jaga-jaga: bila layout pakai server component, paksa refresh
     router.refresh();
   };
 
@@ -134,7 +154,7 @@ export default function ProductCategoryPage() {
         headers: new Headers({ "X-Requested-With": "XMLHttpRequest", Accept: "application/json" }),
         cache: "no-store",
       });
-      await loadCategories(); // pastikan fresh
+      await loadCategories(); // fresh after delete
     } catch (e: any) {
       setError(e?.response?.data?.message || e?.message || "Failed to delete");
       await loadCategories();
@@ -166,7 +186,7 @@ export default function ProductCategoryPage() {
           <div className="rounded-xl border border-gray-200 bg-white shadow-sm">
             {/* Card toolbar */}
             <div className="flex items-center justify-end gap-2 border-b border-gray-200 px-4 py-3">
-              {/* Search (pill) */}
+              {/* Search */}
               <div className="relative">
                 <input
                   value={query}
@@ -205,17 +225,11 @@ export default function ProductCategoryPage() {
                       <th className="px-3 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 sm:px-6">
                         <div className="flex items-center gap-1">
                           <span>Name</span>
-                          <svg className="h-4 w-4 text-gray-400" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-                            <path strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" d="M8 9l4-4 4 4M8 15l4 4 4-4" />
-                          </svg>
                         </div>
                       </th>
                       <th className="hidden px-3 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 sm:table-cell sm:px-6">
                         <div className="flex items-center gap-1">
                           <span>Parent Category</span>
-                          <svg className="h-4 w-4 text-gray-400" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-                            <path strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" d="M8 9l4-4 4 4M8 15l4 4 4-4" />
-                          </svg>
                         </div>
                       </th>
                       <th className="px-3 py-3 text-center text-xs font-medium uppercase tracking-wider text-gray-500 sm:px-6">
@@ -238,12 +252,13 @@ export default function ProductCategoryPage() {
                           </td>
                           <td className="whitespace-nowrap px-3 py-4 sm:px-6">
                             <div className="h-12 w-12 overflow-hidden rounded bg-gray-200">
+                              {/* eslint-disable-next-line @next/next/no-img-element */}
                               <img
                                 src={category.cover_url || category.cover || "/api/placeholder/50/50"}
                                 alt="Category cover"
                                 className="h-full w-full object-cover"
                                 onError={(e) => {
-                                  e.currentTarget.src =
+                                  (e.currentTarget as HTMLImageElement).src =
                                     "data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNDgiIGhlaWdodD0iNDgiIHZpZXdCb3g9IjAgMCA0OCA0OCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iNDgiIGhlaWdodD0iNDgiIGZpbGw9IiNGM0Y0RjYiLz48cGF0aCBkPSJNMjQgMzZDMzAuNjI3NCAzNiAzNiAzMC42Mjc0IDM2IDI0QzM2IDE3LjM3MjYgMzAuNjI3NCAxMiAyNCAxMkMxNy4zNzI2IDEyIDEyIDE3LjM3MjYgMTIgMjRDMTIgMzAuNjI3NiAxNy4zNzI2IDM2IDI0IDM2WiIgc3Ryb2tlPSIjOUNBM0FGIiBzdHJva2Utd2lkdGg9IjIiLz48cGF0aCBkPSJNMjQgMjhDMjYuMjA5MSAyOCAyOCAyNi4yMDkxIDI4IDI0QzI4IDIxLjc5MDkgMjYuMjA5MSAyMCAyNCAyMEMyMS43OTA5IDIwIDIwIDIxLjc5MDkgMjAgMjRDMjAgMjYuMjA5MSAyMS43OTA5IDI4IDI0IDI4WiIgc3Ryb2tlPSIjOUNBM0FGIiBzdHJva2Utd2lkdGg9IjIiLz48L3N2Zz4=";
                                 }}
                               />

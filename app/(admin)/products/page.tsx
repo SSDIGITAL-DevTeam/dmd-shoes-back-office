@@ -123,6 +123,29 @@ function sortDescAll(a: any, b: any) {
 }
 
 /** ======================
+ *  Case-insensitive NAME search helper
+ *  ====================== */
+const norm = (s?: string | null) => (s ?? "").toString().trim().toLowerCase();
+
+/** Ambil "nama produk" untuk keperluan pencarian */
+function getNameText(item: any): string {
+  return (
+    item?.name_text ||
+    safeText(item?.name, currentLocale) ||
+    safeText(item?.title, currentLocale) ||
+    item?.slug ||
+    String(item?.id ?? "")
+  );
+}
+
+/** TRUE bila nama mengandung keyword (case-insensitive) */
+function matchesName(item: any, keyword: string): boolean {
+  if (!keyword) return true;
+  const key = norm(keyword);
+  return norm(getNameText(item)).includes(key);
+}
+
+/** ======================
  *  Komponen Utama
  *  ====================== */
 type StatusFilter = "all" | "active" | "inactive";
@@ -148,11 +171,10 @@ export default function ProductsPage() {
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const debouncedSearch = useDebounce(searchValue, 500);
 
-  /** 1) Load kategori sekali
-   *    Coba /product-categories?per_page=1000
-   *    Kalau gagal → fallback /categories?per_page=1000
-   *    (tanpa status=all supaya tidak 404)
-   */
+  // trigger refetch setelah delete
+  const [refreshTick, setRefreshTick] = useState(0);
+
+  /** 1) Load kategori sekali */
   useEffect(() => {
     let mounted = true;
     (async () => {
@@ -162,12 +184,10 @@ export default function ProductsPage() {
       try {
         let list: ApiCategory[] = [];
         try {
-          // primary
           const res1 = await tryFetch("/product-categories");
           const raw1 = (res1 as any)?.data ?? res1;
           list = Array.isArray(raw1?.data) ? raw1.data : Array.isArray(raw1) ? raw1 : [];
         } catch {
-          // fallback
           const res2 = await tryFetch("/categories");
           const raw2 = (res2 as any)?.data ?? res2;
           list = Array.isArray(raw2?.data) ? raw2.data : Array.isArray(raw2) ? raw2 : [];
@@ -187,11 +207,32 @@ export default function ProductsPage() {
     };
   }, []);
 
-  /** 2) Ambil produk:
-   *  - all      -> gabung active + inactive (TANPA status=all), sort, paginate virtual
-   *  - active   -> 1 request
-   *  - inactive -> 1 request
-   */
+  /** Helper: ambil SEMUA halaman untuk status tertentu (active/inactive). */
+  async function fetchAllByStatus(status: "active" | "inactive", search?: string) {
+    const perPage = 100; // minta cukup besar; backend bisa override limit
+    let current = 1;
+    let lastPage = 1;
+    let total = 0;
+    const acc: any[] = [];
+
+    while (current <= lastPage) {
+      const res = await listProducts({
+        page: current,
+        perPage,
+        status: status as any,
+        search,
+      });
+      const list = Array.isArray(res?.data) ? res.data : [];
+      acc.push(...list);
+      total = res?.meta?.total ?? acc.length;
+      lastPage = res?.meta?.last_page ?? current; // fallback bila meta kosong
+      current += 1;
+      if (!res?.meta) break; // kalau backend tidak kirim meta, anggap 1 halaman saja
+    }
+    return { items: acc, total };
+  }
+
+  /** 2) Ambil produk */
   useEffect(() => {
     let mounted = true;
 
@@ -203,39 +244,35 @@ export default function ProductsPage() {
         const q = debouncedSearch || undefined;
 
         if (statusFilter === "all") {
-          // --- Gabung kedua status lalu paginate virtual ---
-          const take = Math.max(page, 1) * pageSize;
-
-          const [resActive, resInactive] = await Promise.all([
-            listProducts({ page: 1, perPage: take, search: q, status: "active" as any }),
-            listProducts({ page: 1, perPage: take, search: q, status: "inactive" as any }),
+          // === ALL: gabungkan SEMUA active + inactive ===
+          const [act, inact] = await Promise.all([
+            fetchAllByStatus("active", q),
+            fetchAllByStatus("inactive", q),
           ]);
 
           if (!mounted) return;
 
-          const a = Array.isArray(resActive?.data) ? resActive.data : [];
-          const b = Array.isArray(resInactive?.data) ? resInactive.data : [];
+          let merged = [...act.items, ...inact.items];
 
-          const combinedSorted = [...a, ...b].sort(sortDescAll);
+          if (debouncedSearch) {
+            merged = merged.filter((it) => matchesName(it, debouncedSearch));
+          }
 
-          const totalActive = resActive?.meta?.total ?? a.length;
-          const totalInactive = resInactive?.meta?.total ?? b.length;
-          const totalItems = totalActive + totalInactive;
+          merged.sort(sortDescAll);
 
-          const lastPage = Math.max(1, Math.ceil(totalItems / pageSize));
-          const currentPage = Math.min(Math.max(page, 1), lastPage);
-          const start = (currentPage - 1) * pageSize;
-          const end = start + pageSize;
+          const total = merged.length;
+          const offset = (page - 1) * pageSize;
+          const paged = merged.slice(offset, offset + pageSize);
 
-          setRows(combinedSorted.slice(start, end));
+          setRows(paged as any);
           setMeta({
-            current_page: currentPage,
+            current_page: page,
             per_page: pageSize,
-            total: totalItems,
-            last_page: lastPage,
+            total,
+            last_page: Math.max(1, Math.ceil(total / pageSize)),
           } as any);
         } else {
-          // langsung minta status spesifik
+          // === FILTER SPESIFIK: active/inactive (boleh pakai pagination backend)
           const res = await listProducts({
             page,
             perPage: pageSize,
@@ -245,17 +282,27 @@ export default function ProductsPage() {
 
           if (!mounted) return;
 
-          const list = Array.isArray(res?.data) ? res.data : [];
-          const total = res?.meta?.total ?? list.length;
+          let list = Array.isArray(res?.data) ? res.data : [];
+          if (debouncedSearch) {
+            list = list.filter((it) => matchesName(it, debouncedSearch));
+          }
 
-          setRows(list);
+          setRows(list as any);
           setMeta(
-            res?.meta ?? {
-              current_page: page,
-              per_page: pageSize,
-              total,
-              last_page: Math.max(1, Math.ceil(total / pageSize)),
-            }
+            res?.meta
+              ? {
+                  ...res.meta,
+                  total: res.meta?.total ?? list.length,
+                  last_page:
+                    res.meta?.last_page ??
+                    Math.max(1, Math.ceil((res.meta?.total ?? list.length) / (res.meta?.per_page || pageSize))),
+                }
+              : {
+                  current_page: page,
+                  per_page: pageSize,
+                  total: list.length,
+                  last_page: Math.max(1, Math.ceil(list.length / pageSize)),
+                }
           );
         }
       } catch (err: any) {
@@ -278,7 +325,8 @@ export default function ProductsPage() {
     return () => {
       mounted = false;
     };
-  }, [statusFilter, page, pageSize, debouncedSearch]);
+    // ⬇️ refreshTick ditambahkan agar fetch jalan ulang setelah delete
+  }, [statusFilter, page, pageSize, debouncedSearch, refreshTick]);
 
   // reset page ketika statusFilter atau keyword berubah
   useEffect(() => {
@@ -340,54 +388,13 @@ export default function ProductsPage() {
   }, [pageSize]);
 
   const handleCreate = () => router.push("/products/create");
-  const handleEdit = (id: number | string) => router.push(`/products/${id}/edit`);
+  // pastikan path edit sesuai route kamu. Umumnya: /products/[id]/edit
+  const handleEdit = (id: number | string) => router.push(`/products/edit/${id}`);
 
-  const refetchAfterDelete = async () => {
-    const q = debouncedSearch || undefined;
-    if (statusFilter === "all") {
-      const take = Math.max(page, 1) * pageSize;
-      const [resActive, resInactive] = await Promise.all([
-        listProducts({ page: 1, perPage: take, search: q, status: "active" as any }),
-        listProducts({ page: 1, perPage: take, search: q, status: "inactive" as any }),
-      ]);
-      const a = Array.isArray(resActive?.data) ? resActive.data : [];
-      const b = Array.isArray(resInactive?.data) ? resInactive.data : [];
-      const totalActive = resActive?.meta?.total ?? a.length;
-      const totalInactive = resInactive?.meta?.total ?? b.length;
-      const totalItems = totalActive + totalInactive;
-
-      const combinedSorted = [...a, ...b].sort(sortDescAll);
-      const lastPage = Math.max(1, Math.ceil(totalItems / pageSize));
-      const currentPage = Math.min(Math.max(page, 1), lastPage);
-      const start = (currentPage - 1) * pageSize;
-      const end = start + pageSize;
-
-      setRows(combinedSorted.slice(start, end));
-      setMeta({
-        current_page: currentPage,
-        per_page: pageSize,
-        total: totalItems,
-        last_page: lastPage,
-      } as any);
-    } else {
-      const res = await listProducts({
-        page,
-        perPage: pageSize,
-        search: q,
-        status: statusFilter as any,
-      });
-      const list = Array.isArray(res?.data) ? res.data : [];
-      const total = res?.meta?.total ?? list.length;
-      setRows(list);
-      setMeta(
-        res?.meta ?? {
-          current_page: page,
-          per_page: pageSize,
-          total,
-          last_page: Math.max(1, Math.ceil(total / pageSize)),
-        }
-      );
-    }
+  // ===== REFRESH SETELAH DELETE =====
+  const refetchAfterDelete = () => {
+    // cukup picu ulang useEffect fetch
+    setRefreshTick((t) => t + 1);
   };
 
   const handleDelete = async (id: number | string) => {
@@ -395,7 +402,18 @@ export default function ProductsPage() {
     if (!ok) return;
     try {
       await api.delete(`/products/${id}`);
-      await refetchAfterDelete();
+
+      // Jika item yang tersisa di halaman tinggal 1 (yang dihapus), dan bukan halaman pertama:
+      const isLastItemOnPage = rows.length === 1;
+      const currentPage = meta?.current_page ?? page;
+
+      if (isLastItemOnPage && currentPage > 1) {
+        // mundur 1 halaman; useEffect akan refetch otomatis
+        setPage(currentPage - 1);
+      } else {
+        // tetap di halaman sekarang; paksa refetch
+        refetchAfterDelete();
+      }
     } catch (err: any) {
       alert(
         err?.response?.data?.message ||
@@ -471,7 +489,7 @@ export default function ProductsPage() {
                   onChange={(e) => setSearchValue(e.target.value)}
                   placeholder="Search"
                   aria-label="Cari produk"
-                  className="w-64 rounded-lg border border-gray-300 py-2 pl-9 pr-3 text-sm placeholder:text-gray-400 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="w-64 rounded-lg border border-gray-300 text-black py-2 pl-9 pr-3 text-sm placeholder:text-gray-400 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-blue-500"
                 />
                 <svg
                   className="absolute left-3 top-2.5 h-4 w-4 text-gray-400"

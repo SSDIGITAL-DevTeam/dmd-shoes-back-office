@@ -330,7 +330,7 @@ export default function EditProductPage() {
     const { name, value } = e.target;
     setFormData((prev) => ({ ...prev, [name]: value }));
   };
-  const handleToggleFeatured = () => setFormData((p) => ({ ...p, featured: !p.featured }));
+  const handleToggleFeatured = () => setFormData((p) => ({ ...p, featured: !p.featured })); 
   const handleToggleStatus = () => setFormData((p) => ({ ...p, status: !p.status }));
 
   /** ======= LOAD DETAIL ======= */
@@ -401,11 +401,14 @@ export default function EditProductPage() {
         if (catId) setCategoryOption(catLabel ? { value: catId, label: catLabel } : (await tryFetchCategoryById(catId)) ?? { value: catId, label: `#${catId}` });
         else setCategoryOption(null);
 
-        /** VARIANTS & PRICE **/
+        /** ===== VARIANTS & PRICE ===== */
         const pricingMode = String(d?.pricing_mode ?? "").toLowerCase();
         let attrs: Variant[] = [];
-        if (Array.isArray(d?.attributes_data) && d.attributes_data.length > 0) attrs = mapAttributesDataToVariants(d.attributes_data);
-        else if (Array.isArray(d?.attributes) && d.attributes.length > 0) {
+
+        // 1) Definisi variant/attributes dari beberapa bentuk payload
+        if (Array.isArray(d?.attributes_data) && d.attributes_data.length > 0) {
+          attrs = mapAttributesDataToVariants(d.attributes_data);
+        } else if (Array.isArray(d?.attributes) && d.attributes.length > 0) {
           attrs = d.attributes.map((a: any, idx: number) => ({
             id: idx + 1,
             name: { id: asLang(a?.name?.id ?? a?.name), en: asLang(a?.name?.en ?? a?.name) },
@@ -417,17 +420,37 @@ export default function EditProductPage() {
           if (Array.isArray(d.variants.definitions)) attrs = normalizeDefs(d.variants.definitions);
           else if (Array.isArray(d.variants.attributes)) attrs = normalizeDefs(d.variants.attributes);
         }
+
+        // 2) Ambil semua kemungkinan data harga varian
         let rawVariantPrices: VPriceRow[] = extractRawVariantPrices(d);
+
+        // 3) Jika belum ada attrs tapi ada rows harga varian, infer
         if ((!attrs || attrs.length === 0) && rawVariantPrices.length > 0) {
           const inferred = inferAttributesFromVariantPrices(rawVariantPrices);
           if (inferred.length > 0) attrs = inferred;
         }
+
+        // 4) Pastikan 3 slot variant & trailing option kosong
         attrs = ensure3Variants(attrs);
         setVariants(attrs);
 
-        const willUsePerVariant = rawVariantPrices.length > 0 || pricingMode === "per_variant";
-        if (willUsePerVariant) {
+        // 5) Tentukan pricing type berdasar DB; fallback infer bila kosong
+        const hasAnyVariantPrice = (rawVariantPrices || []).some((r) => {
+          const v = r?.price;
+          if (v === null || v === undefined) return false;
+          const s = String(v).trim().toLowerCase();
+          return s !== "" && s !== "null" && s !== "undefined" && s !== "nan";
+        });
+
+        const initialPricingType: "single" | "per_variant" =
+          pricingMode === "single" || pricingMode === "per_variant"
+            ? (pricingMode as "single" | "per_variant")
+            : (hasAnyVariantPrice ? "per_variant" : "single");
+
+        if (initialPricingType === "per_variant") {
           setPricingType("per_variant");
+
+          // Normalisasi rows
           const rows = rawVariantPrices.map((vp: any) => ({
             labels: Array.isArray(vp?.labels) ? vp.labels : [],
             price: vp?.price ?? null,
@@ -438,9 +461,11 @@ export default function EditProductPage() {
           }));
           setVariantPriceRows(rows);
 
+          // Build groupPrices/individualPrices sesuai dimensi variant
           const validAttrs = (attrs || []).filter((v) => v.options.some((o) => (o.id || o.en).trim() !== ""));
           if (validAttrs.length === 1) {
-            const v0 = validAttrs[0]; const gp: Record<string, string> = {};
+            const v0 = validAttrs[0];
+            const gp: Record<string, string> = {};
             rows.forEach((r) => {
               const labels = (r.labels || []).map(getLabelValue).filter(Boolean);
               if (!labels.length) return;
@@ -453,10 +478,15 @@ export default function EditProductPage() {
                   firstLabel.includes(opt.id) || firstLabel.includes(opt.en)
                 );
               });
-              const key = matchingOption ? optKey(matchingOption) : (firstLabel.includes(":") ? firstLabel.split(":")[1]?.trim() : firstLabel);
-              if (key && key.trim() && key !== "undefined" && key !== "[object Object]") gp[key] = String(r.price ?? "");
+              const key = matchingOption
+                ? optKey(matchingOption)
+                : (firstLabel.includes(":") ? firstLabel.split(":")[1]?.trim() : firstLabel);
+              if (key && key.trim() && key !== "undefined" && key !== "[object Object]") {
+                gp[key] = String(r.price ?? "");
+              }
             });
             setGroupPrices(gp);
+            setIndividualPrices({});
           } else if (validAttrs.length >= 2) {
             const ip: Record<string, string> = {};
             rows.forEach((r) => {
@@ -465,6 +495,11 @@ export default function EditProductPage() {
               if (vals.length >= 2) ip[comboKeyDash(vals)] = String(r.price ?? "");
             });
             setIndividualPrices(ip);
+            setGroupPrices({});
+          } else {
+            // Tidak ada opsi valid
+            setGroupPrices({});
+            setIndividualPrices({});
           }
         } else {
           setPricingType("single");
@@ -977,11 +1012,11 @@ export default function EditProductPage() {
                     Heel Height (cm)
                   </label>
                   <input
-                    type="number" id="heel_height_cm" name="heel_height_cm"
+                    type="number" step="0.1" id="heel_height_cm" name="heel_height_cm"
                     value={(formData as any).heel_height_cm ?? ""}
                     onChange={handleInputChange}
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm text-black"
-                    placeholder="e.g. 12" min={0}
+                    placeholder="e.g. 12.5" min={0}
                   />
                 </div>
               </div>
