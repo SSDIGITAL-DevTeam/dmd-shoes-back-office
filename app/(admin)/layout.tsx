@@ -5,9 +5,7 @@ import { useRouter } from 'next/navigation';
 import { Sidebar } from '@/components/layout/Sidebar';
 import { Topbar } from '@/components/layout/Topbar';
 import { useAuth } from '@/components/providers/AuthProvider';
-import { getCookie as getCookieUtil, deleteCookie as deleteCookieUtil } from '@/lib/cookies';
-
-const API_BASE = (process.env.NEXT_PUBLIC_API_URL || '').replace(/\/$/, '');
+import { deleteCookie as deleteCookieUtil } from '@/lib/cookies';
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
@@ -20,28 +18,11 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     let cancelled = false;
 
     const verify = async () => {
-      // 1) selalu ambil token dari cookie (persist setelah refresh)
-      const t = getCookieUtil('access_token');
-
-      // Tidak ada token → selesai checking dulu, baru redirect
-      if (!t) {
-        if (!cancelled) {
-          setChecking(false);
-          router.replace('/auth/login');
-        }
-        return;
-      }
-
       try {
-        // 2) verifikasi token
-        const res = await fetch(`${API_BASE}/user`, {
-          headers: { Authorization: `Bearer ${t}` },
-          cache: 'no-store',
-        });
+        const res = await fetch("/api/user", { cache: 'no-store' });
 
-        // 401/403 → memang tidak valid → hapus cookie & login lagi
         if (res.status === 401 || res.status === 403) {
-          deleteCookieUtil('access_token');
+          deleteCookieUtil('access_token'); // opsional, untuk bersih
           clearAuth();
           if (!cancelled) {
             setChecking(false);
@@ -50,11 +31,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           return;
         }
 
-        // Error lain (404/5xx/network) → JANGAN hapus token; tampilkan error saja
         if (!res.ok) {
-          const msg = `Auth check failed (${res.status})`;
           if (!cancelled) {
-            setError(msg);
+            setError(`Auth check failed (${res.status})`);
             setChecking(false);
           }
           return;
@@ -62,11 +41,10 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
         const me = await res.json();
         if (!cancelled) {
-          setAuth({ user: me, token: t });
+          setAuth({ user: me, token: me.token ?? null });
           setChecking(false);
         }
       } catch (e: any) {
-        // Network error → jangan drop token
         if (!cancelled) {
           setError(e?.message || 'Network error');
           setChecking(false);
@@ -83,13 +61,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
   const onLogout = async () => {
     try {
-      const t = token || getCookieUtil('access_token');
-      if (t) {
-        await fetch(`${API_BASE}/logout`, {
-          method: 'POST',
-          headers: { Authorization: `Bearer ${t}` },
-        }).catch(() => {});
-      }
+      await fetch("/api/logout", { method: 'POST' }).catch(() => {});
     } finally {
       deleteCookieUtil('access_token');
       clearAuth();
@@ -103,7 +75,13 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
   return (
     <div className="flex flex-col h-screen bg-gray-50">
-      <Topbar onMenuClick={toggleSidebar} isMenuOpen={sidebarOpen} userName={user?.name ?? null} userEmail={user?.email ?? null} onLogout={onLogout} />
+      <Topbar
+        onMenuClick={toggleSidebar}
+        isMenuOpen={sidebarOpen}
+        userName={user?.name ?? null}
+        userEmail={user?.email ?? null}
+        onLogout={onLogout}
+      />
       <div className="flex flex-1 overflow-hidden">
         <Sidebar open={sidebarOpen} onClose={closeSidebar} />
         <main className="flex-1 overflow-y-auto bg-gray-50 p-6">

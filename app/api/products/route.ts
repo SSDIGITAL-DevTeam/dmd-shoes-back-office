@@ -1,9 +1,10 @@
 // app/api/products/route.ts
-import { NextRequest } from "next/server";
+export const runtime = "nodejs";
+
+import { NextRequest, NextResponse } from "next/server";
 import { makeApiUrl } from "../../_utils/backend";
 
-const noStoreHeaders = {
-  "content-type": "application/json",
+const noStore = {
   "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
   Pragma: "no-cache",
   Expires: "0",
@@ -14,55 +15,50 @@ function makeAuthHeaders(req: NextRequest) {
   h.set("Accept", "application/json");
   h.set("X-Requested-With", "XMLHttpRequest");
 
+  // Ambil Authorization dari header atau cookie httpOnly access_token
   const auth = req.headers.get("authorization");
   if (auth) h.set("Authorization", auth);
-
   if (!auth) {
-    const rawCookie = req.headers.get("cookie") || "";
-    const token = rawCookie.split(";").map((s) => s.trim()).find((s) => s.startsWith("access_token="))?.split("=")[1];
+    const raw = req.headers.get("cookie") || "";
+    const token = raw.split(";").map(s => s.trim()).find(s => s.startsWith("access_token="))?.split("=")[1];
     if (token) h.set("Authorization", `Bearer ${decodeURIComponent(token)}`);
   }
 
-  const cookie = req.headers.get("cookie");
-  if (cookie) h.set("Cookie", cookie);
-  const origin = req.headers.get("origin");
-  if (origin) h.set("Origin", origin);
-  const referer = req.headers.get("referer");
-  if (referer) h.set("Referer", referer);
-
+  // ⚠️ JANGAN teruskan Origin/Referer/Cookie FE ke backend eksternal
   return h;
 }
 
 async function buildCreateBody(req: NextRequest) {
-  const base = makeAuthHeaders(req);
+  const headers = makeAuthHeaders(req);
   const ct = req.headers.get("content-type") || "";
 
   if (ct.includes("multipart/form-data")) {
+    // Rekonstruksi FormData jika memang perlu mapping field
     const inForm = await req.formData();
     const fd = new FormData();
 
-    // bilingual fields
+    // bilingual
     fd.append("name[id]", String(inForm.get("name[id]") ?? inForm.get("name_id") ?? ""));
     fd.append("name[en]", String(inForm.get("name[en]") ?? inForm.get("name_en") ?? ""));
     fd.append("description[id]", String(inForm.get("description[id]") ?? inForm.get("description_id") ?? ""));
     fd.append("description[en]", String(inForm.get("description[en]") ?? inForm.get("description_en") ?? ""));
 
-    // plain fields required by backend
+    // plain (fallback)
     const namePlain = inForm.get("name");
     const descPlain = inForm.get("description");
     if (namePlain) fd.append("name", String(namePlain));
     if (descPlain) fd.append("description", String(descPlain));
 
+    // scalar
     const pm = inForm.get("pricing_mode") ?? inForm.get("pricingMode");
     if (pm != null) fd.append("pricing_mode", String(pm));
-
     const slug = inForm.get("slug");
     if (slug) fd.append("slug", String(slug));
 
     const status = inForm.get("status");
     const featured = inForm.get("featured");
-    fd.append("status", status === "true" || status === "1" ? "1" : "0");
-    fd.append("featured", featured === "true" || featured === "1" ? "1" : "0");
+    if (status != null) fd.append("status", (status === "true" || status === "1") ? "1" : "0");
+    if (featured != null) fd.append("featured", (featured === "true" || featured === "1") ? "1" : "0");
 
     const category_id = inForm.get("category_id");
     if (category_id) fd.append("category_id", String(category_id));
@@ -81,7 +77,7 @@ async function buildCreateBody(req: NextRequest) {
     if (desc_id) fd.append("seo_description[id]", String(desc_id));
     if (desc_en) fd.append("seo_description[en]", String(desc_en));
 
-    // forward arrays
+    // arrays/complex
     inForm.forEach((v, k) => {
       if (
         k.startsWith("seo_tags[") ||
@@ -97,81 +93,89 @@ async function buildCreateBody(req: NextRequest) {
     const cover = inForm.get("cover");
     if (cover) fd.append("cover", cover as Blob);
 
-    return { headers: base as HeadersInit, body: fd as BodyInit };
+    return { headers, body: fd as BodyInit, isMultipart: true };
   }
 
-  // JSON
+  // JSON body
   const body = await req.json().catch(() => ({} as any));
-
   const payload: any = {
     ...body,
     pricing_mode: body.pricing_mode ?? body.pricingMode,
   };
 
-  // map bilingual → plain if missing
   const str = (v: any) => (typeof v === "string" ? v.trim() : "");
-  const tryPick = (...c: any[]) => c.map(str).find((x) => !!x) || "";
+  const pick = (...c: any[]) => c.map(str).find(Boolean) || "";
+  const namePlain2 = pick(body.name, body.name_text, body?.name?.en, body?.name?.id);
+  const descPlain2 = pick(body.description, body.description_text, body?.description?.en, body?.description?.id);
+  if (namePlain2) payload.name = namePlain2;
+  if (descPlain2) payload.description = descPlain2;
 
-  const namePlain = tryPick(body.name, body.name_text, body?.name?.en, body?.name?.id);
-  const descPlain = tryPick(body.description, body.description_text, body?.description?.en, body?.description?.id);
-  if (namePlain) payload.name = namePlain;
-  if (descPlain) payload.description = descPlain;
-
-  // normalize booleans
   if (typeof body.status !== "undefined") payload.status = !!body.status;
   if (typeof body.featured !== "undefined") payload.featured = !!body.featured;
 
-  // legacy → related_products
   if (!Array.isArray(body.related_products)) {
     const legacy = Array.isArray(body.related_ids) ? body.related_ids : Array.isArray(body.relatedIds) ? body.relatedIds : [];
     if (legacy.length) payload.related_products = legacy;
   }
 
-  base.set("Content-Type", "application/json");
-  return { headers: base as HeadersInit, body: JSON.stringify(payload) as BodyInit };
+  headers.set("Content-Type", "application/json");
+  return { headers, body: JSON.stringify(payload) as BodyInit, isMultipart: false };
 }
 
 /** GET /api/products */
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
-  const page = searchParams.get("page") ?? "";
-  const perPage = searchParams.get("perPage") ?? "";
-  const status = searchParams.get("status") ?? "";
-  const search = searchParams.get("search") ?? "";
-
   const qs = new URLSearchParams();
-  if (page) qs.set("page", page);
-  if (perPage) qs.set("per_page", perPage);
-  if (status) qs.set("status", status);
-  if (search) qs.set("search", search);
+  if (searchParams.get("page")) qs.set("page", searchParams.get("page")!);
+  if (searchParams.get("perPage")) qs.set("per_page", searchParams.get("perPage")!);
+  if (searchParams.get("status")) qs.set("status", searchParams.get("status")!);
+  if (searchParams.get("search")) qs.set("search", searchParams.get("search")!);
 
-  const res = await fetch(makeApiUrl(`products?${qs.toString()}`), {
+  const upstream = await fetch(makeApiUrl(`products?${qs.toString()}`), {
     method: "GET",
     headers: makeAuthHeaders(req),
     cache: "no-store",
     // @ts-ignore
     next: { revalidate: 0 },
-    credentials: "include",
   });
 
-  const txt = await res.text().catch(() => "");
-  return new Response(txt || "{}", { status: res.status, headers: noStoreHeaders });
+  const text = await upstream.text().catch(() => "");
+  return new NextResponse(text || "{}", {
+    status: upstream.status,
+    headers: {
+      "content-type": upstream.headers.get("content-type") ?? "application/json",
+      ...noStore,
+    },
+  });
 }
 
-/** POST /api/products -> CREATE */
+/** POST /api/products */
 export async function POST(req: NextRequest) {
-  const { headers, body } = await buildCreateBody(req);
+  try {
+    const { headers, body, isMultipart } = await buildCreateBody(req);
 
-  const res = await fetch(makeApiUrl("products"), {
-    method: "POST",
-    headers,
-    body,
-    cache: "no-store",
-    // @ts-ignore
-    next: { revalidate: 0 },
-    credentials: "include",
-  });
+    const upstream = await fetch(makeApiUrl("products"), {
+      method: "POST",
+      headers,
+      body,
+      cache: "no-store",
+      // penting untuk request dengan body (terutama multipart) di Node
+      // @ts-ignore
+      duplex: "half",
+    });
 
-  const txt = await res.text().catch(() => "");
-  return new Response(txt || "{}", { status: res.status, headers: noStoreHeaders });
+    const text = await upstream.text().catch(() => "");
+    return new NextResponse(text || "{}", {
+      status: upstream.status,
+      headers: {
+        "content-type": upstream.headers.get("content-type") ?? (isMultipart ? "application/json" : "application/json"),
+        ...noStore,
+      },
+    });
+  } catch (e: any) {
+    return NextResponse.json(
+      { status: "error", message: e?.message ?? "Proxy POST /products failed" },
+      { status: 502 }
+    );
+  }
 }
