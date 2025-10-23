@@ -34,11 +34,13 @@ export default function LoginPage() {
     setError(null);
     setLoading(true);
     try {
-      const res = await fetch(`${API_BASE}/login`, {
+      const res = await fetch(`/api/auth/admin/login`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email, password }),
+        credentials: "same-origin",
       });
+
 
       const data: LoginResponse = await res.json().catch(() => ({} as any));
       if (!res.ok || data.status !== "success" || !data.token) {
