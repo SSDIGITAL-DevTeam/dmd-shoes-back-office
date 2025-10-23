@@ -1,7 +1,6 @@
 // app/api/products/route.ts
 import { NextRequest } from "next/server";
 import { makeApiUrl } from "../../_utils/backend";
-import { ensureEnvOrThrow, makeApiUrl } from "../../_utils/backend";
 
 const noStoreHeaders = {
   "content-type": "application/json",

@@ -34,21 +34,31 @@ function useDebounced<T>(value: T, delay = 350) {
 export default function ArticlesPage() {
   // server data
   const [rows, setRows] = useState<ArticleItem[]>([]);
-  const [meta, setMeta] = useState<{ total: number; current_page: number; last_page: number }>({
+  const [meta, setMeta] = useState<{
+    total: number;
+    current_page: number;
+    last_page: number;
+  }>({
     total: 0,
     current_page: 1,
     last_page: 1,
   });
 
   // ui state
-  const [activeFilter, setActiveFilter] = useState<"All" | "Publish" | "Draft" | "Trash">("All");
+  const [activeFilter, setActiveFilter] = useState<
+    "All" | "Publish" | "Draft" | "Trash"
+  >("All");
   const [query, setQuery] = useState("");
   const debouncedQuery = useDebounced(query, 350);
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage, setItemsPerPage] = useState(10);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [toast, setToast] = useState<{ show: boolean; msg: string; variant?: "success" | "error" }>({
+  const [toast, setToast] = useState<{
+    show: boolean;
+    msg: string;
+    variant?: "success" | "error";
+  }>({
     show: false,
     msg: "",
   });
@@ -60,7 +70,11 @@ export default function ArticlesPage() {
     if (!msg) return;
 
     if (msg === "published") {
-      setToast({ show: true, msg: "Artikel berhasil dipublish", variant: "success" });
+      setToast({
+        show: true,
+        msg: "Artikel berhasil dipublish",
+        variant: "success",
+      });
     } else if (msg === "draft") {
       setToast({ show: true, msg: "Draft tersimpan", variant: "success" });
     }
@@ -142,7 +156,7 @@ export default function ArticlesPage() {
 
   const handleTogglePublish = async (id: number) => {
     if (isTrash) return; // tidak relevan di Trash
-    const target = rows.find(r => r.id === id);
+    const target = rows.find((r) => r.id === id);
     if (!target) return;
 
     // state baru yang akan di-set
@@ -150,23 +164,41 @@ export default function ArticlesPage() {
     const nextStatus: "publish" | "draft" = nextPublished ? "publish" : "draft";
 
     // optimistic update
-    setRows(prev =>
-      prev.map(a => a.id === id ? { ...a, published: nextPublished, status: nextStatus } : a)
+    setRows((prev) =>
+      prev.map((a) =>
+        a.id === id ? { ...a, published: nextPublished, status: nextStatus } : a
+      )
     );
-    setTogglingIds(prev => new Set(prev).add(id));
+    setTogglingIds((prev) => new Set(prev).add(id));
 
     try {
-      await toggleArticle(id, { status: nextStatus, published: nextPublished, lang: "id" });
+      await toggleArticle(id, {
+        status: nextStatus,
+        published: nextPublished,
+        lang: "id",
+      });
       await fetchArticles(); // sinkron meta
-      setToast({ show: true, msg: "Status artikel diperbarui", variant: "success" });
+      setToast({
+        show: true,
+        msg: "Status artikel diperbarui",
+        variant: "success",
+      });
     } catch (e: any) {
       // rollback kalau gagal
-      setRows(prev =>
-        prev.map(a => a.id === id ? { ...a, published: !nextPublished, status: target.status } : a)
+      setRows((prev) =>
+        prev.map((a) =>
+          a.id === id
+            ? { ...a, published: !nextPublished, status: target.status }
+            : a
+        )
       );
-      setToast({ show: true, msg: e?.message || "Gagal memperbarui status", variant: "error" });
+      setToast({
+        show: true,
+        msg: e?.message || "Gagal memperbarui status",
+        variant: "error",
+      });
     } finally {
-      setTogglingIds(prev => {
+      setTogglingIds((prev) => {
         const n = new Set(prev);
         n.delete(id);
         return n;
@@ -183,7 +215,7 @@ export default function ArticlesPage() {
     // kalau halaman jadi kosong dan masih punya halaman sebelumnya, geser 1 halaman dan refetch
     const willBeEmpty = remainingItemsOnThisPage === 0 && currentPage > 1;
     if (willBeEmpty) {
-      setCurrentPage(p => Math.max(1, p - 1));
+      setCurrentPage((p) => Math.max(1, p - 1));
       // fetchArticles akan otomatis terpanggil oleh useEffect currentPage
     } else {
       // tetap di halaman ini tapi refetch biar meta/rows sinkron
@@ -197,11 +229,19 @@ export default function ArticlesPage() {
     if (!ok) return;
     try {
       await deleteArticleSvc(id); // soft delete
-      setToast({ show: true, msg: "Artikel dipindah ke Trash", variant: "success" });
+      setToast({
+        show: true,
+        msg: "Artikel dipindah ke Trash",
+        variant: "success",
+      });
       const remaining = rows.length - 1;
       refetchAfterDeleteIfNeeded(remaining);
     } catch (e: any) {
-      setToast({ show: true, msg: e?.message || "Gagal menghapus artikel", variant: "error" });
+      setToast({
+        show: true,
+        msg: e?.message || "Gagal menghapus artikel",
+        variant: "error",
+      });
     }
   };
 
@@ -210,24 +250,42 @@ export default function ArticlesPage() {
     if (!ok) return;
     try {
       await restoreArticle(id);
-      setToast({ show: true, msg: "Artikel berhasil direstore", variant: "success" });
+      setToast({
+        show: true,
+        msg: "Artikel berhasil direstore",
+        variant: "success",
+      });
       const remaining = rows.length - 1;
       refetchAfterDeleteIfNeeded(remaining);
     } catch (e: any) {
-      setToast({ show: true, msg: e?.message || "Gagal restore artikel", variant: "error" });
+      setToast({
+        show: true,
+        msg: e?.message || "Gagal restore artikel",
+        variant: "error",
+      });
     }
   };
 
   const handleForceDelete = async (id: number) => {
-    const ok = window.confirm("Hapus permanen artikel ini? Tindakan tidak bisa dibatalkan.");
+    const ok = window.confirm(
+      "Hapus permanen artikel ini? Tindakan tidak bisa dibatalkan."
+    );
     if (!ok) return;
     try {
       await forceDeleteArticle(id);
-      setToast({ show: true, msg: "Artikel dihapus permanen", variant: "success" });
+      setToast({
+        show: true,
+        msg: "Artikel dihapus permanen",
+        variant: "success",
+      });
       const remaining = rows.length - 1;
       refetchAfterDeleteIfNeeded(remaining);
     } catch (e: any) {
-      setToast({ show: true, msg: e?.message || "Gagal hapus permanen", variant: "error" });
+      setToast({
+        show: true,
+        msg: e?.message || "Gagal hapus permanen",
+        variant: "error",
+      });
     }
   };
 
@@ -253,19 +311,23 @@ export default function ArticlesPage() {
       <div className="px-6 py-6 bg-white border-b border-gray-200">
         <div className="flex items-center justify-between">
           <h1 className="text-2xl font-semibold text-gray-900">Articles</h1>
-          {!isTrash && <NewNounButton noun="article" onClick={handleNewArticle} />}
+          {!isTrash && (
+            <NewNounButton noun="article" onClick={handleNewArticle} />
+          )}
         </div>
 
         {/* Filter pills */}
         <div className="mt-6 flex justify-center">
           <div className="inline-flex items-center gap-2 rounded-full bg-gray-100/60 p-1">
-            {(["All", "Publish", "Draft", "Trash"] as const).map(f => (
+            {(["All", "Publish", "Draft", "Trash"] as const).map((f) => (
               <button
                 key={f}
                 onClick={() => setActiveFilter(f)}
                 className={[
                   "rounded-full px-4 py-1.5 text-sm font-medium transition",
-                  activeFilter === f ? "bg-white text-gray-800 shadow-sm" : "text-gray-500 hover:text-gray-700",
+                  activeFilter === f
+                    ? "bg-white text-gray-800 shadow-sm"
+                    : "text-gray-500 hover:text-gray-700",
                 ].join(" ")}
               >
                 {f}
@@ -286,19 +348,32 @@ export default function ArticlesPage() {
                 <div className="relative">
                   <input
                     value={query}
-                    onChange={e => setQuery(e.target.value)}
+                    onChange={(e) => setQuery(e.target.value)}
                     placeholder={isTrash ? "Search in Trash" : "Search"}
                     className="w-56 rounded-lg border border-gray-300 pl-9 pr-3 py-2 text-sm placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                   />
-                  <svg className="absolute left-3 top-2.5 h-4 w-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                  <svg
+                    className="absolute left-3 top-2.5 h-4 w-4 text-gray-400"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
+                    />
                   </svg>
                 </div>
               </div>
             </div>
 
             {error && (
-              <div className="mx-4 my-3 rounded-md border border-red-200 bg-red-50 px-4 py-2 text-sm text-red-700" role="alert">
+              <div
+                className="mx-4 my-3 rounded-md border border-red-200 bg-red-50 px-4 py-2 text-sm text-red-700"
+                role="alert"
+              >
                 {error}
               </div>
             )}
@@ -309,95 +384,168 @@ export default function ArticlesPage() {
                 <thead className="bg-gray-50">
                   <tr>
                     <th className="w-12 px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      <input type="checkbox" className="rounded border-gray-300" />
+                      <input
+                        type="checkbox"
+                        className="rounded border-gray-300"
+                      />
                     </th>
-                    <th className="px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Cover</th>
+                    <th className="px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Cover
+                    </th>
                     <th className="px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                       <div className="flex items-center gap-1">
                         <span>Title</span>
-                        <svg className="h-4 w-4 text-gray-400" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-                          <path strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" d="M8 9l4-4 4 4M8 15l4 4 4-4" />
+                        <svg
+                          className="h-4 w-4 text-gray-400"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                        >
+                          <path
+                            strokeWidth="2"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            d="M8 9l4-4 4 4M8 15l4 4 4-4"
+                          />
                         </svg>
                       </div>
                     </th>
                     <th className="hidden sm:table-cell px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                       <div className="flex items-center gap-1">
                         <span>Author</span>
-                        <svg className="h-4 w-4 text-gray-400" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-                          <path strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" d="M8 9l4-4 4 4M8 15l4 4 4-4" />
+                        <svg
+                          className="h-4 w-4 text-gray-400"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                        >
+                          <path
+                            strokeWidth="2"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            d="M8 9l4-4 4 4M8 15l4 4 4-4"
+                          />
                         </svg>
                       </div>
                     </th>
 
                     {!isTrash && (
                       <>
-                        <th className="px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
+                        <th className="px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                          Status
+                        </th>
                         <th className="px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                           <div className="flex items-center gap-1">
                             <span>Published</span>
-                            <svg className="h-4 w-4 text-gray-400" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-                              <path strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" d="M8 9l4-4 4 4M8 15l4 4 4-4" />
+                            <svg
+                              className="h-4 w-4 text-gray-400"
+                              viewBox="0 0 24 24"
+                              fill="none"
+                              stroke="currentColor"
+                            >
+                              <path
+                                strokeWidth="2"
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                                d="M8 9l4-4 4 4M8 15l4 4 4-4"
+                              />
                             </svg>
                           </div>
                         </th>
                       </>
                     )}
                     {isTrash && (
-                      <th className="px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Deleted At</th>
+                      <th className="px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        Deleted At
+                      </th>
                     )}
-                    <th className="px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
+                    <th className="px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Actions
+                    </th>
                   </tr>
                 </thead>
 
                 <tbody className="bg-white divide-y divide-gray-200">
                   {loading ? (
-                    Array.from({ length: Math.min(itemsPerPage, 10) }).map((_, idx) => (
-                      <tr key={`sk-${idx}`} className="animate-pulse">
-                        <td className="px-3 sm:px-6 py-4"><div className="h-4 w-4 rounded bg-gray-200" /></td>
-                        <td className="px-3 sm:px-6 py-4"><div className="h-12 w-12 rounded bg-gray-200" /></td>
-                        <td className="px-3 sm:px-6 py-4"><div className="h-4 w-56 rounded bg-gray-200" /></td>
-                        <td className="hidden sm:table-cell px-3 sm:px-6 py-4"><div className="h-4 w-32 rounded bg-gray-200" /></td>
-                        {!isTrash ? (
-                          <>
-                            <td className="px-3 sm:px-6 py-4"><div className="h-6 w-20 rounded bg-gray-200" /></td>
-                            <td className="px-3 sm:px-6 py-4"><div className="h-6 w-16 rounded bg-gray-200" /></td>
-                          </>
-                        ) : (
-                          <td className="px-3 sm:px-6 py-4"><div className="h-6 w-28 rounded bg-gray-200" /></td>
-                        )}
-                        <td className="px-3 sm:px-6 py-4"><div className="h-6 w-20 rounded bg-gray-200" /></td>
-                      </tr>
-                    ))
+                    Array.from({ length: Math.min(itemsPerPage, 10) }).map(
+                      (_, idx) => (
+                        <tr key={`sk-${idx}`} className="animate-pulse">
+                          <td className="px-3 sm:px-6 py-4">
+                            <div className="h-4 w-4 rounded bg-gray-200" />
+                          </td>
+                          <td className="px-3 sm:px-6 py-4">
+                            <div className="h-12 w-12 rounded bg-gray-200" />
+                          </td>
+                          <td className="px-3 sm:px-6 py-4">
+                            <div className="h-4 w-56 rounded bg-gray-200" />
+                          </td>
+                          <td className="hidden sm:table-cell px-3 sm:px-6 py-4">
+                            <div className="h-4 w-32 rounded bg-gray-200" />
+                          </td>
+                          {!isTrash ? (
+                            <>
+                              <td className="px-3 sm:px-6 py-4">
+                                <div className="h-6 w-20 rounded bg-gray-200" />
+                              </td>
+                              <td className="px-3 sm:px-6 py-4">
+                                <div className="h-6 w-16 rounded bg-gray-200" />
+                              </td>
+                            </>
+                          ) : (
+                            <td className="px-3 sm:px-6 py-4">
+                              <div className="h-6 w-28 rounded bg-gray-200" />
+                            </td>
+                          )}
+                          <td className="px-3 sm:px-6 py-4">
+                            <div className="h-6 w-20 rounded bg-gray-200" />
+                          </td>
+                        </tr>
+                      )
+                    )
                   ) : rows.length === 0 ? (
                     <tr>
-                      <td colSpan={isTrash ? 7 : 8} className="px-3 sm:px-6 py-10 text-center text-gray-500">
+                      <td
+                        colSpan={isTrash ? 7 : 8}
+                        className="px-3 sm:px-6 py-10 text-center text-gray-500"
+                      >
                         {isTrash ? "Trash kosong" : "Tidak ada artikel"}
                       </td>
                     </tr>
                   ) : (
-                    rows.map(article => (
+                    rows.map((article) => (
                       <tr key={article.id} className="hover:bg-gray-50">
                         <td className="px-3 sm:px-6 py-4">
-                          <input type="checkbox" className="rounded border-gray-300" />
+                          <input
+                            type="checkbox"
+                            className="rounded border-gray-300"
+                          />
                         </td>
                         <td className="px-3 sm:px-6 py-4">
                           <div className="relative h-10 w-10 sm:h-12 sm:w-12 overflow-hidden rounded bg-gray-200">
-                            {article.cover_url && (
+                            {article.cover_url ? (
                               <Image
                                 src={article.cover_url}
                                 alt="cover"
                                 fill
                                 sizes="48px"
                                 style={{ objectFit: "cover" }}
+                                // sementara jika perlu bypass optimizer:
+                                // unoptimized
                               />
+                            ) : (
+                              <div className="h-full w-full" />
                             )}
                           </div>
                         </td>
                         <td className="px-3 sm:px-6 py-4">
-                          <div className="max-w-xs truncate text-sm font-medium text-gray-900">{article.title_text}</div>
+                          <div className="max-w-xs truncate text-sm font-medium text-gray-900">
+                            {article.title_text}
+                          </div>
                         </td>
                         <td className="hidden sm:table-cell px-3 sm:px-6 py-4">
-                          <div className="text-sm text-gray-900">{article.author_name}</div>
+                          <div className="text-sm text-gray-900">
+                            {article.author_name}
+                          </div>
                         </td>
 
                         {!isTrash ? (
@@ -408,7 +556,9 @@ export default function ArticlesPage() {
                             <td className="px-3 sm:px-6 py-4">
                               <ToggleSwitch
                                 checked={!!article.published}
-                                disabled={isTrash || togglingIds.has(article.id)}
+                                disabled={
+                                  isTrash || togglingIds.has(article.id)
+                                }
                                 aria-busy={togglingIds.has(article.id)}
                                 onChange={() => handleTogglePublish(article.id)}
                               />
@@ -416,7 +566,11 @@ export default function ArticlesPage() {
                           </>
                         ) : (
                           <td className="px-3 sm:px-6 py-4">
-                            <span className="text-sm text-gray-600">{article.deleted_at ? new Date(article.deleted_at).toLocaleString() : "-"}</span>
+                            <span className="text-sm text-gray-600">
+                              {article.deleted_at
+                                ? new Date(article.deleted_at).toLocaleString()
+                                : "-"}
+                            </span>
                           </td>
                         )}
 
@@ -440,8 +594,12 @@ export default function ArticlesPage() {
                             </div>
                           ) : (
                             <div className="flex items-center gap-3 sm:gap-4">
-                              <EditButton onClick={() => handleEdit(article.id)} />
-                              <DeleteButton onClick={() => handleDelete(article.id)} />
+                              <EditButton
+                                onClick={() => handleEdit(article.id)}
+                              />
+                              <DeleteButton
+                                onClick={() => handleDelete(article.id)}
+                              />
                             </div>
                           )}
                         </td>

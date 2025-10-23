@@ -8,6 +8,7 @@ const nextConfig = {
 
       // kalau kamu juga pakai pexels (sesuai data contoh)
       { protocol: 'https', hostname: 'images.pexels.com', pathname: '/photos/**' },
+      { protocol: 'https', hostname: 'picsum.photos', pathname: '/**' },
     ],
     // atau sementara bisa pakai:
     // unoptimized: true, // (bypass optimizer Next — cepat buat ngetes)

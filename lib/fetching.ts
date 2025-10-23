@@ -19,35 +19,59 @@ async function request<T>(method: string, path: string, init?: RequestInit): Pro
   const res = await fetch(url, {
     method,
     cache: "no-store",
+    credentials: "same-origin", // penting agar cookie ikut
     ...init,
   });
 
   const text = await res.text();
   let data: any = {};
-  try { data = text ? JSON.parse(text) : {}; } catch { data = {}; }
+  try {
+    data = text ? JSON.parse(text) : {};
+  } catch {
+    data = {};
+  }
 
   if (!res.ok) {
-    const msg = data?.message || `Request failed (${res.status})`;
+    const msg = (data && (data.message || data.error)) || `Request failed (${res.status})`;
     throw Object.assign(new Error(msg), { status: res.status, data });
   }
   return data as T;
 }
 
+const jsonOrFormHeaders = (body?: any, init?: RequestInit) =>
+  body instanceof FormData
+    ? init?.headers // biarkan browser set boundary multipart
+    : { "Content-Type": "application/json", ...(init?.headers || {}) };
+
+const jsonOrFormBody = (body?: any) =>
+  body instanceof FormData ? body : JSON.stringify(body ?? {});
+
 const api = {
   get: <T = any>(path: string, opts?: { params?: Query; init?: RequestInit }) =>
     request<T>("GET", `${path}${toQS(opts?.params)}`, opts?.init),
+
   post: <T = any>(path: string, body?: any, init?: RequestInit) =>
     request<T>("POST", path, {
       ...(init || {}),
-      headers: body instanceof FormData ? init?.headers : { "Content-Type": "application/json", ...(init?.headers || {}) },
-      body: body instanceof FormData ? body : JSON.stringify(body ?? {}),
+      headers: jsonOrFormHeaders(body, init),
+      body: jsonOrFormBody(body),
     }),
+
   patch: <T = any>(path: string, body?: any, init?: RequestInit) =>
     request<T>("PATCH", path, {
       ...(init || {}),
-      headers: body instanceof FormData ? init?.headers : { "Content-Type": "application/json", ...(init?.headers || {}) },
-      body: body instanceof FormData ? body : JSON.stringify(body ?? {}),
+      headers: jsonOrFormHeaders(body, init),
+      body: jsonOrFormBody(body),
     }),
+
+  // <<< Tambahan: PUT >>>
+  put: <T = any>(path: string, body?: any, init?: RequestInit) =>
+    request<T>("PUT", path, {
+      ...(init || {}),
+      headers: jsonOrFormHeaders(body, init),
+      body: jsonOrFormBody(body),
+    }),
+
   delete: <T = any>(path: string, init?: RequestInit) =>
     request<T>("DELETE", path, init),
 };

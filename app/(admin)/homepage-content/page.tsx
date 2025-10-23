@@ -1,15 +1,36 @@
 "use client";
 
-import React, { useMemo, useRef, useState } from "react";
-import { Upload, Play, X, Plus, Trash2 } from "lucide-react";
+import React, { useEffect, useRef, useState } from "react";
+import { Upload, Play, Plus, Trash2 } from "lucide-react";
 import { Toast } from "@/components/ui/Toast";
+import {
+  getHomepage,
+  updateHeroWithFile,
+  updateHeroWithUrl,
+  updateVideoYoutube,
+  updateVideoFile,
+  deleteVideo as apiDeleteVideo,
+  createSlider,
+  deleteSlider as apiDeleteSlider,
+  reorderSliders,
+  type HomepagePayload,
+} from "@/services/homepage.service";
 
-type Media = { id: string; url: string; name?: string; sizeKB?: number };
+type Media = {
+  id: string | number;
+  url: string;
+  name?: string;
+  sizeKB?: number;
+  file?: File | null; // <-- penting
+};
 
 function bytesToKB(size?: number) {
   if (!size) return undefined;
   return Math.round(size / 1024);
 }
+
+const GROUP1 = "carousel1";
+const GROUP2 = "carousel2";
 
 export default function HomepageContentPage() {
   // Hero
@@ -25,7 +46,10 @@ export default function HomepageContentPage() {
   const [slider2, setSlider2] = useState<Media[]>([]);
 
   const [saving, setSaving] = useState(false);
-  const [toast, setToast] = useState<{ show: boolean; msg: string; variant?: "success" | "error" }>({ show: false, msg: "" });
+  const [toast, setToast] = useState<{ show: boolean; msg: string; variant?: "success" | "error" }>({
+    show: false,
+    msg: "",
+  });
 
   // file inputs
   const heroInput = useRef<HTMLInputElement>(null);
@@ -33,41 +57,191 @@ export default function HomepageContentPage() {
   const slider1Input = useRef<HTMLInputElement>(null);
   const slider2Input = useRef<HTMLInputElement>(null);
 
+  // snapshot awal buat diff
+  const initialRef = useRef<{
+    heroUrl: string | null;
+    videoMode: "youtube" | "file" | null;
+    videoUrl: string | null;
+    videoFileUrl: string | null;
+    slider1Ids: number[];
+    slider2Ids: number[];
+  }>({
+    heroUrl: null,
+    videoMode: null,
+    videoUrl: null,
+    videoFileUrl: null,
+    slider1Ids: [],
+    slider2Ids: [],
+  });
+
   function pickFile(ref: React.RefObject<HTMLInputElement>) {
     ref.current?.click();
   }
 
+  // === simpan file ke state ===
   function onPickOne(e: React.ChangeEvent<HTMLInputElement>, cb: (m: Media) => void) {
     const file = e.target.files?.[0];
     if (!file) return;
     const url = URL.createObjectURL(file);
-    cb({ id: crypto.randomUUID(), url, name: file.name, sizeKB: bytesToKB(file.size) });
+    cb({ id: crypto.randomUUID(), url, name: file.name, sizeKB: bytesToKB(file.size), file }); // <-- simpan file
     e.target.value = "";
   }
 
   function onPickMany(e: React.ChangeEvent<HTMLInputElement>, setList: React.Dispatch<React.SetStateAction<Media[]>>) {
     const files = e.target.files;
     if (!files?.length) return;
-    const next: Media[] = Array.from(files).map((f) => ({ id: crypto.randomUUID(), url: URL.createObjectURL(f), name: f.name, sizeKB: bytesToKB(f.size) }));
+    const next: Media[] = Array.from(files).map((f) => ({
+      id: crypto.randomUUID(),
+      url: URL.createObjectURL(f),
+      name: f.name,
+      sizeKB: bytesToKB(f.size),
+      file: f, // <-- simpan file
+    }));
     setList((prev) => [...prev, ...next]);
     e.target.value = "";
   }
 
+  /* =======================
+     LOAD EXISTING CONTENT
+     ======================= */
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await getHomepage();
+        const data = res.data as HomepagePayload;
+
+        // hero
+        const heroUrl = data.hero?.image_url ?? null;
+        initialRef.current.heroUrl = heroUrl;
+        setHero(heroUrl ? { id: "hero", url: heroUrl } : null);
+
+        // video
+        const vMode = data.video?.mode ?? null;
+        const vUrl = data.video?.url ?? null;
+        const vFileUrl = data.video?.file_url ?? null;
+        initialRef.current.videoMode = vMode;
+        initialRef.current.videoUrl = vUrl;
+        initialRef.current.videoFileUrl = vFileUrl;
+
+        if (vMode === "youtube") {
+          setVideoMode("link");
+          setYoutubeUrl(vUrl || "");
+          setVideo(null);
+        } else if (vMode === "file") {
+          setVideoMode("upload");
+          setVideo(vFileUrl ? { id: "video", url: vFileUrl } : null);
+        } else {
+          setVideoMode("link");
+          setYoutubeUrl("");
+          setVideo(null);
+        }
+
+        // sliders
+        const s1 = (data.sliders?.[GROUP1] || []).map((it) => ({ id: it.id, url: it.image_url }));
+        const s2 = (data.sliders?.[GROUP2] || []).map((it) => ({ id: it.id, url: it.image_url }));
+        setSlider1(s1);
+        setSlider2(s2);
+        initialRef.current.slider1Ids = s1.map((x) => Number(x.id)).filter(Boolean) as number[];
+        initialRef.current.slider2Ids = s2.map((x) => Number(x.id)).filter(Boolean) as number[];
+      } catch (e: any) {
+        setToast({ show: true, msg: e?.message || "Gagal memuat homepage", variant: "error" });
+      }
+    })();
+  }, []);
+
+  /* =======================
+     SAVE (POST/PATCH/DELETE)
+     ======================= */
   const onSave = async () => {
-    setSaving(true);
-    // In real app, send to API.
-    await new Promise((r) => setTimeout(r, 900));
-    setSaving(false);
-    setToast({ show: true, msg: "Homepage content saved", variant: "success" });
+    try {
+      setSaving(true);
+
+      // HERO
+      const heroChangedUrl = (initialRef.current.heroUrl || null) !== (hero?.url || null);
+      if (hero) {
+        if (hero.file) {
+          await updateHeroWithFile(hero.file);
+        } else if (heroChangedUrl && hero.url) {
+          await updateHeroWithUrl(hero.url);
+        }
+      }
+
+      // VIDEO
+      const initialMode = initialRef.current.videoMode; // 'youtube' | 'file' | null
+      if (videoMode === "link") {
+        if (!youtubeUrl && (initialMode === "youtube" || initialMode === "file")) {
+          await apiDeleteVideo(); // hapus
+        } else if (youtubeUrl && (initialMode !== "youtube" || youtubeUrl !== initialRef.current.videoUrl)) {
+          await updateVideoYoutube(youtubeUrl);
+        }
+      } else {
+        if (video?.file) {
+          await updateVideoFile(video.file);
+        }
+      }
+
+      // SLIDERS: diff
+      const now1Ids = slider1.map((m) => (typeof m.id === "number" ? m.id : undefined)).filter(Boolean) as number[];
+      const now2Ids = slider2.map((m) => (typeof m.id === "number" ? m.id : undefined)).filter(Boolean) as number[];
+      const removed1 = initialRef.current.slider1Ids.filter((id) => !now1Ids.includes(id));
+      const removed2 = initialRef.current.slider2Ids.filter((id) => !now2Ids.includes(id));
+
+      for (const id of [...removed1, ...removed2]) {
+        await apiDeleteSlider(id);
+      }
+
+      // create baru (item belum punya id numerik, dan punya file)
+      const new1 = slider1.filter((m) => typeof m.id !== "number" && m.file);
+      const new2 = slider2.filter((m) => typeof m.id !== "number" && m.file);
+
+      for (let idx = 0; idx < new1.length; idx++) {
+        const m = new1[idx];
+        if (m.file) await createSlider(GROUP1, { file: m.file }, idx);
+      }
+      for (let idx = 0; idx < new2.length; idx++) {
+        const m = new2[idx];
+        if (m.file) await createSlider(GROUP2, { file: m.file }, idx);
+      }
+
+      // reorder existing (yang sudah punya id)
+      const orders1 = slider1
+        .map((m, i) => (typeof m.id === "number" ? { id: m.id, sort: i } : null))
+        .filter(Boolean) as Array<{ id: number; sort: number }>;
+      if (orders1.length) await reorderSliders(GROUP1, orders1);
+
+      const orders2 = slider2
+        .map((m, i) => (typeof m.id === "number" ? { id: m.id, sort: i } : null))
+        .filter(Boolean) as Array<{ id: number; sort: number }>;
+      if (orders2.length) await reorderSliders(GROUP2, orders2);
+
+      setToast({ show: true, msg: "Homepage content saved", variant: "success" });
+
+      // refresh snapshot
+      const res = await getHomepage();
+      const data = res.data as HomepagePayload;
+      initialRef.current.heroUrl = data.hero?.image_url ?? null;
+      initialRef.current.videoMode = data.video?.mode ?? null;
+      initialRef.current.videoUrl = data.video?.url ?? null;
+      initialRef.current.videoFileUrl = data.video?.file_url ?? null;
+      initialRef.current.slider1Ids = (data.sliders?.[GROUP1] || []).map((x) => x.id);
+      initialRef.current.slider2Ids = (data.sliders?.[GROUP2] || []).map((x) => x.id);
+    } catch (e: any) {
+      setToast({ show: true, msg: e?.message || "Gagal menyimpan homepage", variant: "error" });
+    } finally {
+      setSaving(false);
+    }
   };
 
-  // Common upload card styles
+  // === styles (layout tidak diubah) ===
   const card = "rounded-2xl border border-gray-200 bg-white shadow-sm";
   const sectionTitle = "text-base font-semibold text-gray-800";
   const label = "mb-2 block text-sm font-medium text-gray-700";
-  const dashed = "flex cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed border-gray-300 p-6 text-sm text-gray-500 hover:bg-gray-50 transition-all duration-300";
-  const orangeBtn = "inline-flex items-center gap-2 text-sm font-medium text-[#F97316] hover:text-[#ea6a0b] transition-colors";
-  const deleteBtn = "inline-flex items-center gap-2 text-sm font-medium text-red-600 hover:text-red-700 transition-colors";
+  const dashed =
+    "flex cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed border-gray-300 p-6 text-sm text-gray-500 hover:bg-gray-50 transition-all duration-300";
+  const orangeBtn =
+    "inline-flex items-center gap-2 text-sm font-medium text-[#F97316] hover:text-[#ea6a0b] transition-colors";
+  const deleteBtn =
+    "inline-flex items-center gap-2 text-sm font-medium text-red-600 hover:text-red-700 transition-colors";
 
   return (
     <div className="min-h-full bg-gray-50">
@@ -192,7 +366,11 @@ export default function HomepageContentPage() {
         <section className={card} aria-labelledby="slider1-title">
           <div className="flex items-center justify-between border-b border-gray-200 px-6 py-4">
             <h2 id="slider1-title" className={sectionTitle}>Slider 1</h2>
-            <button onClick={() => pickFile(slider1Input)} className="inline-flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-sm font-medium text-gray-700 shadow-sm transition hover:bg-gray-50" aria-label="Upload New Image">
+            <button
+              onClick={() => pickFile(slider1Input)}
+              className="inline-flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-sm font-medium text-gray-700 shadow-sm transition hover:bg-gray-50"
+              aria-label="Upload New Image"
+            >
               <Plus className="h-4 w-4" /> Upload New Image
             </button>
           </div>
@@ -201,7 +379,11 @@ export default function HomepageContentPage() {
               <figure key={img.id} className="rounded-xl border border-gray-200 bg-white p-2 shadow-sm transition-all duration-300 hover:scale-[1.01]">
                 <img src={img.url} alt={img.name || "slider"} className="h-40 w-full rounded-lg object-cover" />
                 <div className="mt-2">
-                  <button className={deleteBtn} aria-label={`Delete ${img.name || "image"}`} onClick={() => setSlider1((prev) => prev.filter((i) => i.id !== img.id))}>
+                  <button
+                    className="inline-flex items-center gap-2 text-sm font-medium text-red-600 hover:text-red-700 transition-colors"
+                    aria-label={`Delete ${img.name || "image"}`}
+                    onClick={() => setSlider1((prev) => prev.filter((i) => i.id !== img.id))}
+                  >
                     <Trash2 className="h-4 w-4" /> Delete Image
                   </button>
                 </div>
@@ -215,7 +397,11 @@ export default function HomepageContentPage() {
         <section className={card} aria-labelledby="slider2-title">
           <div className="flex items-center justify-between border-b border-gray-200 px-6 py-4">
             <h2 id="slider2-title" className={sectionTitle}>Slider 2</h2>
-            <button onClick={() => pickFile(slider2Input)} className="inline-flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-sm font-medium text-gray-700 shadow-sm transition hover:bg-gray-50" aria-label="Upload New Image">
+            <button
+              onClick={() => pickFile(slider2Input)}
+              className="inline-flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-sm font-medium text-gray-700 shadow-sm transition hover:bg-gray-50"
+              aria-label="Upload New Image"
+            >
               <Plus className="h-4 w-4" /> Upload New Image
             </button>
           </div>
@@ -224,7 +410,11 @@ export default function HomepageContentPage() {
               <figure key={img.id} className="rounded-xl border border-gray-200 bg-white p-2 shadow-sm transition-all duration-300 hover:scale-[1.01]">
                 <img src={img.url} alt={img.name || "slider"} className="h-40 w-full rounded-lg object-cover" />
                 <div className="mt-2">
-                  <button className={deleteBtn} aria-label={`Delete ${img.name || "image"}`} onClick={() => setSlider2((prev) => prev.filter((i) => i.id !== img.id))}>
+                  <button
+                    className="inline-flex items-center gap-2 text-sm font-medium text-red-600 hover:text-red-700 transition-colors"
+                    aria-label={`Delete ${img.name || "image"}`}
+                    onClick={() => setSlider2((prev) => prev.filter((i) => i.id !== img.id))}
+                  >
                     <Trash2 className="h-4 w-4" /> Delete Image
                   </button>
                 </div>
@@ -240,4 +430,3 @@ export default function HomepageContentPage() {
     </div>
   );
 }
-
