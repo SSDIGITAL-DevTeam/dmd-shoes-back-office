@@ -19,13 +19,13 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
     const verify = async () => {
       try {
-        const res = await fetch("/api/user", { cache: 'no-store' });
+        setError(null);
+        const res = await fetch("/api/user", { cache: 'no-store', credentials: 'include' });
 
         if (res.status === 401 || res.status === 403) {
           deleteCookieUtil('access_token'); // opsional, untuk bersih
           clearAuth();
           if (!cancelled) {
-            setChecking(false);
             router.replace('/auth/login');
           }
           return;
