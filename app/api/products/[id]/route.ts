@@ -88,11 +88,15 @@ function makeForwardInit(
 }
 
 /** GET detail product */
-export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
+export async function GET(
+  req: NextRequest,
+  ctx: { params: Promise<{ id: string }> }
+) {
   try {
     ensureEnvOrThrow();
+    const { id } = await ctx.params;
 
-    const res = await fetch(buildBackendUrl(req, params.id), {
+    const res = await fetch(buildBackendUrl(req, id), {
       method: "GET",
       headers: baseHeaders(req),
       cache: "no-store",
@@ -112,9 +116,13 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
 }
 
 /** Forward PATCH with support for JSON or multipart/form-data */
-export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
+export async function PATCH(
+  req: NextRequest,
+  ctx: { params: Promise<{ id: string }> }
+) {
   try {
     ensureEnvOrThrow();
+    const { id } = await ctx.params;
     const contentType = req.headers.get("content-type") || "";
     const init = makeForwardInit("PATCH", req, contentType);
 
@@ -127,7 +135,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
       init.body = await (init.body as any);
     }
 
-    const res = await fetch(buildBackendUrl(req, params.id), init);
+    const res = await fetch(buildBackendUrl(req, id), init);
 
     const data = (await parseSafe(res)) ?? {};
     return new NextResponse(typeof data === "string" ? data : JSON.stringify(data), {
@@ -143,9 +151,13 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
 }
 
 /** Some backends use PUT for update */
-export async function PUT(req: NextRequest, ctx: { params: { id: string } }) {
+export async function PUT(
+  req: NextRequest,
+  ctx: { params: Promise<{ id: string }> }
+) {
   try {
     ensureEnvOrThrow();
+    const { id } = await ctx.params;
     const contentType = req.headers.get("content-type") || "";
     const init = makeForwardInit("PUT", req, contentType);
 
@@ -156,7 +168,7 @@ export async function PUT(req: NextRequest, ctx: { params: { id: string } }) {
       init.body = await (init.body as any);
     }
 
-    const res = await fetch(buildBackendUrl(req, ctx.params.id), init);
+    const res = await fetch(buildBackendUrl(req, id), init);
 
     const data = (await parseSafe(res)) ?? {};
     return new NextResponse(typeof data === "string" ? data : JSON.stringify(data), {
@@ -172,9 +184,13 @@ export async function PUT(req: NextRequest, ctx: { params: { id: string } }) {
 }
 
 /** Allow POST (for backends expecting POST + _method override) */
-export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
+export async function POST(
+  req: NextRequest,
+  ctx: { params: Promise<{ id: string }> }
+) {
   try {
     ensureEnvOrThrow();
+    const { id } = await ctx.params;
     const contentType = req.headers.get("content-type") || "";
     const init = makeForwardInit("POST", req, contentType);
 
@@ -185,7 +201,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       init.body = await (init.body as any);
     }
 
-    const res = await fetch(buildBackendUrl(req, params.id), init);
+    const res = await fetch(buildBackendUrl(req, id), init);
 
     const data = (await parseSafe(res)) ?? {};
     return new NextResponse(typeof data === "string" ? data : JSON.stringify(data), {
@@ -201,11 +217,15 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
 }
 
 /** DELETE product */
-export async function DELETE(req: NextRequest, { params }: { params: { id: string } }) {
+export async function DELETE(
+  req: NextRequest,
+  ctx: { params: Promise<{ id: string }> }
+) {
   try {
     ensureEnvOrThrow();
+    const { id } = await ctx.params;
 
-    const res = await fetch(buildBackendUrl(req, params.id), {
+    const res = await fetch(buildBackendUrl(req, id), {
       method: "DELETE",
       headers: baseHeaders(req),
       cache: "no-store",

@@ -25,8 +25,12 @@ function makeAuthHeaders(req: NextRequest) {
   return h;
 }
 
-export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
-  const res = await fetch(makeApiUrl(`/users/${params.id}`), {
+export async function GET(
+  req: NextRequest,
+  ctx: { params: Promise<{ id: string }> }
+) {
+  const { id } = await ctx.params;
+  const res = await fetch(makeApiUrl(`/users/${id}`), {
     method: "GET",
     headers: makeAuthHeaders(req),
     cache: "no-store",
@@ -38,12 +42,16 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
   return new Response(txt || "{}", { status: res.status, headers: noStoreHeaders });
 }
 
-export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
+export async function PATCH(
+  req: NextRequest,
+  ctx: { params: Promise<{ id: string }> }
+) {
+  const { id } = await ctx.params;
   const headers = makeAuthHeaders(req);
   headers.set("Content-Type", "application/json");
   const raw = await req.text().catch(() => "");
   const body = raw ? JSON.parse(raw) : {};
-  const res = await fetch(makeApiUrl(`/users/${params.id}`), {
+  const res = await fetch(makeApiUrl(`/users/${id}`), {
     method: "PATCH",
     headers,
     body: JSON.stringify(body),
@@ -57,11 +65,15 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
 }
 
 /** DELETE /api/users/:id */
-export async function DELETE(req: NextRequest, { params }: { params: { id: string } }) {
+export async function DELETE(
+  req: NextRequest,
+  ctx: { params: Promise<{ id: string }> }
+) {
+  const { id } = await ctx.params;
   const headers = makeAuthHeaders(req);
 
   // coba DELETE murni dulu
-  let res = await fetch(makeApiUrl(`/users/${params.id}`), {
+  let res = await fetch(makeApiUrl(`/users/${id}`), {
     method: "DELETE",
     headers,
     cache: "no-store",
@@ -74,7 +86,7 @@ export async function DELETE(req: NextRequest, { params }: { params: { id: strin
   if (res.status === 405 || res.status === 404) {
     const fh = new Headers(headers);
     fh.set("Content-Type", "application/json");
-    res = await fetch(makeApiUrl(`/users/${params.id}`), {
+    res = await fetch(makeApiUrl(`/users/${id}`), {
       method: "POST",
       headers: fh,
       body: JSON.stringify({ _method: "DELETE" }),

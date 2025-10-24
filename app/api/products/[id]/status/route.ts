@@ -4,14 +4,15 @@ import { NextRequest, NextResponse } from "next/server";
 import { ensureEnvOrThrow, makeApiUrl, readCookie } from "../../../../_utils/backend";
 
 /** PATCH /api/products/:id/status  →  Laravel contoh: PATCH /api/v1/products/:id/status */
-export async function PATCH(req: NextRequest, ctx: { params: { id: string } }) {
+export async function PATCH(req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
   try {
     ensureEnvOrThrow();
+    const { id } = await ctx.params;
     const body = await req.json().catch(() => ({}));
     const cookie = req.headers.get("cookie");
     const bearer = readCookie(cookie, "access_token");
 
-    const res = await fetch(makeApiUrl(`products/${ctx.params.id}/status`), {
+    const res = await fetch(makeApiUrl(`products/${id}/status`), {
       method: "PATCH",
       headers: {
         Accept: "application/json",

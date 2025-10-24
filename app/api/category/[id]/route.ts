@@ -94,9 +94,12 @@ async function normalizeCategoryBody(req: NextRequest): Promise<{
 }
 
 /** GET /api/category/:id */
-export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+export async function GET(
+  req: NextRequest,
+  ctx: { params: Promise<{ id: string }> }
+) {
   ensureEnvOrThrow();
-  const { id } = await params;
+  const { id } = await ctx.params;
   const res = await fetch(makeApiUrl(`categories/${id}?_=${Date.now()}`), {
     method: "GET",
     headers: makeAuthHeaders(req),
@@ -110,9 +113,12 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
 }
 
 /** PATCH /api/category/:id  (POST + _method=PATCH bila multipart) */
-export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+export async function PATCH(
+  req: NextRequest,
+  ctx: { params: Promise<{ id: string }> }
+) {
   ensureEnvOrThrow();
-  const { id } = await params;
+  const { id } = await ctx.params;
   const { headers, body, isMultipart } = await normalizeCategoryBody(req);
 
   let method = "PATCH";
@@ -145,9 +151,12 @@ export async function PUT(req: NextRequest, ctx: { params: Promise<{ id: string 
 }
 
 /** DELETE /api/category/:id */
-export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+export async function DELETE(
+  req: NextRequest,
+  ctx: { params: Promise<{ id: string }> }
+) {
   ensureEnvOrThrow();
-  const { id } = await params;
+  const { id } = await ctx.params;
   const res = await fetch(makeApiUrl(`categories/${id}`), {
     method: "DELETE",
     headers: makeAuthHeaders(req),

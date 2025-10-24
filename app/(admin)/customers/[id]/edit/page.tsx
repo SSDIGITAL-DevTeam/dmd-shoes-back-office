@@ -39,11 +39,11 @@ export default function EditCustomerPage() {
       setLoading(true);
       setError(null);
       try {
-        const { data } = await api.get<CustomerApi>(`/customers/${id}`);
+        const { data: customer } = await api.get<CustomerApi>(`/customers/${id}`);
         if (!mounted) return;
-        setFullName(data.data.full_name || "");
-        setEmail(data.data.email || "");
-        setWhatsApp(data.data.whatsapp_number || "");
+        setFullName(customer.full_name || "");
+        setEmail(customer.email || "");
+        setWhatsApp(customer.whatsapp_number || "");
       } catch (e: any) {
         if (!mounted) return;
         setError(e?.message || "Gagal memuat data customer");

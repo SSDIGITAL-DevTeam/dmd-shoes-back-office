@@ -161,3 +161,26 @@ export async function loadParentCategoryOptions(
     parent_id: c.parent_id != null ? Number(c.parent_id) : null,
   })).filter((o) => !o.parent_id); // jaga-jaga, filter child
 }
+
+/** ===== Compat helpers for components that expect legacy names ===== */
+
+export function categoryLabel(item: CategoryItem, locale: "id" | "en" = "id"): string {
+  return (
+    item.name_text ??
+    safeText(item.name, locale) ??
+    item.slug ??
+    `Category ${item.id}`
+  );
+}
+
+/** Legacy alias: ambil seluruh kategori (parent + child) */
+export async function fetchAllCategories(perPage = 500, search = ""): Promise<CategoryItem[]> {
+  const { data } = await listCategories({ status: "active", perPage, search });
+  return data;
+}
+
+/** Legacy alias: ambil hanya parent categories */
+export async function fetchParentCategories(perPage = 500, search = ""): Promise<CategoryItem[]> {
+  const { data } = await listCategories({ status: "active", perPage, parent: "top", search });
+  return data.filter((item) => !item.parent_id);
+}
