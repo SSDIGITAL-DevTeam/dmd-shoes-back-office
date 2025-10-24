@@ -171,7 +171,6 @@ export default function EditUserPage() {
                   <ToggleSwitch
                     checked={formData.status}
                     onChange={(v: boolean) => setFormData((s) => ({ ...s, status: v }))}
-                    size="md"
                   />
                   <FieldError name="status" />
                 </div>
