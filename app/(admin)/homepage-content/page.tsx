@@ -380,7 +380,7 @@ export default function HomepageContentPage() {
   return (
     <div className="min-h-full bg-gray-50">
       {/* Header */}
-      <div className="sticky top-0 z-10 flex items-center justify-between border-b border-gray-200 bg-white px-6 py-4">
+      <div className="sticky top-[var(--topper-height,-25px)] z-10 flex items-center justify-between border-b border-gray-200 bg-white px-6 py-4">
         <h1 className="text-2xl font-semibold text-gray-900">
           Homepage Content
         </h1>
