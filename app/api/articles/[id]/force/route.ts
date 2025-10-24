@@ -8,25 +8,27 @@ function passthrough(res: Response) {
   );
 }
 
-// (opsional) hindari caching route ini
+// (opsional, biar gak ke-cache)
 export const dynamic = "force-dynamic";
-// (opsional) jika perlu Node runtime
+// (opsional, kalau butuh Node runtime)
 export const runtime = "nodejs";
 
-export async function DELETE(
-  req: Request,
-  ctx: { params: Record<string, string | string[]> } // <-- longgar & kompatibel
-) {
+export async function DELETE(req: Request) {
   ensureEnvOrThrow();
 
-  const raw = ctx?.params?.id;
-  const id = Array.isArray(raw) ? raw[0] : raw; // pastikan string
+  // Ambil id dari URL tanpa butuh argumen context
+  const url = new URL(req.url);
+  // Contoh path: /api/articles/123/force
+  // cari segmen setelah "articles"
+  const segments = url.pathname.split("/").filter(Boolean);
+  const idx = segments.lastIndexOf("articles");
+  const id = idx >= 0 && segments[idx + 1] ? segments[idx + 1] : null;
 
   if (!id) {
-    return new Response(JSON.stringify({ status: "error", message: "Missing id" }), {
-      status: 400,
-      headers: { "content-type": "application/json" },
-    });
+    return new Response(
+      JSON.stringify({ status: "error", message: "Missing article id in URL" }),
+      { status: 400, headers: { "content-type": "application/json" } }
+    );
   }
 
   const upstream = await fetch(makeApiUrl(`articles/${id}/force`), {
