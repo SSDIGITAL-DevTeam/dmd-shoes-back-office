@@ -1021,6 +1021,48 @@ export default function EditProductPage() {
                 </div>
               </div>
 
+              {/* Cover */}
+              <div className="bg-white rounded-xl border border-gray-200 p-6 mb-0">
+                <h3 className="text-lg font-semibold text-gray-900 mb-4">
+                  Cover
+                </h3>
+                <div className="mb-4">
+                  <label
+                    htmlFor="cover_file"
+                    className="block text-sm font-medium text-gray-700 mb-2"
+                  >
+                    Cover File
+                  </label>
+                  <input
+                    id="cover_file"
+                    type="file"
+                    accept="image/*"
+                    onChange={(e) => setCoverFile(e.target.files?.[0] || null)}
+                    className="block w-full text-sm text-gray-900 file:mr-4 file:rounded-md file:border-0 file:bg-gray-100 file:px-3 file:py-2 file:text-sm file:font-semibold file:text-gray-700 hover:file:bg-gray-200"
+                  />
+                  {(coverFile || formData.cover_url) && (
+                    <div className="mt-3">
+                      <img
+                        src={
+                          coverFile
+                            ? URL.createObjectURL(coverFile)
+                            : formData.cover_url ||
+                              "data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNDgiIGhlaWdodD0iNDgiIHZpZXdCb3g9IjAgMCA0OCA0OCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iNDgiIGhlaWdodD0iNDgiIGZpbGw9IiNGM0Y0RjYiLz48cGF0aCBkPSJNMjQgMzZDMzAuNjI3NCAzNiAzNiAzMC42Mjc0IDM2IDI0QzM2IDE3LjM3MjYgMzAuNjI3NCAxMiAyNCAxMkMxNy4zNzI2IDEyIDEyIDE3LjM3MjYgMTIgMjRDMTIgMzAuNjI3NiAxNy4zNzI2IDM2IDI0IDM2WiIgc3Ryb2tlPSIjOUNBM0FGIiBzdHJva2Utd2lkdGg9IjIiLz48cGF0aCBkPSJNMjQgMjhDMjYuMjA5MSAyOCAyOCAyNi4yMDkxIDI4IDI0QzI4IDIxLjc5MDkgMjYuMjA5MSAyMCAyNCAyMEMyMS43OTA5IDIwIDIwIDIxLjc5MDkgMjAgMjRDMjAgMjYuMjA5MSAyMS43OTA5IDI4IDI0IDI4WiIgc3Ryb2tlPSIjOUNBM0FGIiBzdHJva2Utd2lkdGg9IjIiLz48L3N2Zz4="
+                        }
+                        alt="Cover preview"
+                        className="h-28 w-full max-w-xs rounded border object-cover"
+                        onLoad={(e) => {
+                          if (coverFile)
+                            URL.revokeObjectURL(
+                              (e.target as HTMLImageElement).src
+                            );
+                        }}
+                      />
+                    </div>
+                  )}
+                </div>
+              </div>
+
               <ProductGallery
                 galleries={galleries}
                 onAddGallery={() =>
