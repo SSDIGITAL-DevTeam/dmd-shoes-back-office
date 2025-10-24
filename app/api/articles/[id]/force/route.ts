@@ -1,9 +1,5 @@
 // app/api/articles/[id]/force/route.ts
-import { NextResponse } from "next/server";
 import { ensureEnvOrThrow, makeApiUrl } from "../../../../_utils/backend";
-
-export const runtime = "nodejs";          // opsional (kalau kamu butuh Node fetch)
-export const dynamic = "force-dynamic";   // opsional (hindari cache)
 
 function passthrough(res: Response) {
   const ct = res.headers.get("content-type") || "application/json";
@@ -12,13 +8,28 @@ function passthrough(res: Response) {
   );
 }
 
+// (opsional) hindari caching route ini
+export const dynamic = "force-dynamic";
+// (opsional) jika perlu Node runtime
+export const runtime = "nodejs";
+
 export async function DELETE(
-  req: Request,                               // ← ganti dari NextRequest ke Request
-  { params }: { params: { id: string } }      // ← param shape yang benar
+  req: Request,
+  ctx: { params: Record<string, string | string[]> } // <-- longgar & kompatibel
 ) {
   ensureEnvOrThrow();
 
-  const upstream = await fetch(makeApiUrl(`articles/${params.id}/force`), {
+  const raw = ctx?.params?.id;
+  const id = Array.isArray(raw) ? raw[0] : raw; // pastikan string
+
+  if (!id) {
+    return new Response(JSON.stringify({ status: "error", message: "Missing id" }), {
+      status: 400,
+      headers: { "content-type": "application/json" },
+    });
+  }
+
+  const upstream = await fetch(makeApiUrl(`articles/${id}/force`), {
     method: "DELETE",
     headers: {
       Accept: "application/json",
@@ -26,7 +37,7 @@ export async function DELETE(
       Authorization: req.headers.get("authorization") ?? "",
       "X-Requested-With": "XMLHttpRequest",
     },
-    // cache: "no-store", // atau pakai dynamic=force-dynamic di atas
+    // cache: "no-store",
   });
 
   return passthrough(upstream);
