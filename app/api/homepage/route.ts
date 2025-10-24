@@ -2,34 +2,45 @@
 export const runtime = "nodejs";
 
 import { NextRequest, NextResponse } from "next/server";
-import { makeApiUrl, readCookie } from "../../_utils/backend"; // sesuaikan path util di project kamu
+import { ensureEnvOrThrow, makeApiUrl } from "../../_utils/backend";
 
-function authHeader(req: NextRequest) {
-  const h = req.headers.get("authorization");
-  if (h) return h;
-  const bearer = readCookie(req.headers.get("cookie") || "", "access_token");
-  return bearer ? `Bearer ${bearer}` : undefined;
-}
+/** Header anti-cache untuk semua response proxy */
+const noStore = {
+  "content-type": "application/json",
+  "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+  Pragma: "no-cache",
+  Expires: "0",
+} as const;
 
+/** GET /api/homepage -> BE /api/v1/homepage */
 export async function GET(req: NextRequest) {
   try {
-    const url = makeApiUrl("/homepage");
-    const headers = new Headers(req.headers);
-    headers.set("accept", "application/json");
-    const a = authHeader(req);
-    if (a) headers.set("authorization", a);
+    ensureEnvOrThrow();
 
-    // Hindari header yang bikin upstream rejek
-    headers.delete("content-length");
-    headers.delete("host");
+    const url = new URL(req.url);
+    const qs = url.search || "";
 
-    const res = await fetch(url, { method: "GET", headers, cache: "no-store" });
-    const body = await res.arrayBuffer();
-    return new NextResponse(body, {
-      status: res.status,
-      headers: { "content-type": res.headers.get("content-type") || "application/json" },
+    const res = await fetch(makeApiUrl(`homepage${qs}`), {
+      method: "GET",
+      headers: {
+        Accept: "application/json",
+        "X-Requested-With": "XMLHttpRequest",
+      },
+      cache: "no-store",
+      // @ts-ignore
+      next: { revalidate: 0 },
+      credentials: "include",
+    });
+
+    const text = await res.text().catch(() => "");
+    return new NextResponse(text || "{}", {
+      status: res.status || 200,
+      headers: noStore,
     });
   } catch (e: any) {
-    return NextResponse.json({ message: e?.message || "Proxy error" }, { status: 500 });
+    return NextResponse.json(
+      { status: "error", message: e?.message || "Proxy error (GET /homepage)" },
+      { status: 503, headers: noStore }
+    );
   }
 }

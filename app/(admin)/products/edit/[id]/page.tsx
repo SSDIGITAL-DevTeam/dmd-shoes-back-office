@@ -51,6 +51,14 @@ const parseNumber = (v: any) => {
   const n = typeof v === "number" ? v : Number(v);
   return Number.isFinite(n) ? n : null;
 };
+// NEW: normalizer desimal (dukung koma/titik)
+const normalizeDecimal = (v: any): number | null => {
+  if (v === null || v === undefined || v === "") return null;
+  const s = String(v).replace(",", ".").trim();
+  const n = Number(s);
+  return Number.isFinite(n) ? n : null;
+};
+
 const getLabelValue = (lb: any): string => {
   const candidates = [
     lb?.value?.en, lb?.value?.id, lb?.option?.en, lb?.option?.id,
@@ -295,7 +303,7 @@ export default function EditProductPage() {
     tags: "",
     featured: false,
     status: true,
-    heel_height_cm: "",
+    heel_height_cm: "", // ← string input; akan dinormalisasi saat submit
     name_id: "",
     name_en: "",
     description_id: "",
@@ -326,8 +334,13 @@ export default function EditProductPage() {
   const toggleSub = (first: string, second: string) =>
     setOpenSubGroups((prev) => ({ ...prev, [first]: { ...(prev[first] || {}), [second]: !isSubOpen(first, second) } }));
 
+  // UPDATED: perbolehkan koma → titik untuk heel_height_cm
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
     const { name, value } = e.target;
+    if (name === "heel_height_cm") {
+      setFormData((prev) => ({ ...prev, [name]: value.replace(",", ".") })); // simpan bertitik
+      return;
+    }
     setFormData((prev) => ({ ...prev, [name]: value }));
   };
   const handleToggleFeatured = () => setFormData((p) => ({ ...p, featured: !p.featured })); 
@@ -395,7 +408,6 @@ export default function EditProductPage() {
           cover_url: d?.cover_url || d?.cover || "",
         }));
 
-        // category option
         const catId = d?.category_id ?? d?.category?.id ?? null;
         const catLabel = d?.category?.name?.id || d?.category?.name?.en || d?.category?.slug || "";
         if (catId) setCategoryOption(catLabel ? { value: catId, label: catLabel } : (await tryFetchCategoryById(catId)) ?? { value: catId, label: `#${catId}` });
@@ -405,7 +417,6 @@ export default function EditProductPage() {
         const pricingMode = String(d?.pricing_mode ?? "").toLowerCase();
         let attrs: Variant[] = [];
 
-        // 1) Definisi variant/attributes dari beberapa bentuk payload
         if (Array.isArray(d?.attributes_data) && d.attributes_data.length > 0) {
           attrs = mapAttributesDataToVariants(d.attributes_data);
         } else if (Array.isArray(d?.attributes) && d.attributes.length > 0) {
@@ -421,20 +432,14 @@ export default function EditProductPage() {
           else if (Array.isArray(d.variants.attributes)) attrs = normalizeDefs(d.variants.attributes);
         }
 
-        // 2) Ambil semua kemungkinan data harga varian
         let rawVariantPrices: VPriceRow[] = extractRawVariantPrices(d);
-
-        // 3) Jika belum ada attrs tapi ada rows harga varian, infer
         if ((!attrs || attrs.length === 0) && rawVariantPrices.length > 0) {
           const inferred = inferAttributesFromVariantPrices(rawVariantPrices);
           if (inferred.length > 0) attrs = inferred;
         }
-
-        // 4) Pastikan 3 slot variant & trailing option kosong
         attrs = ensure3Variants(attrs);
         setVariants(attrs);
 
-        // 5) Tentukan pricing type berdasar DB; fallback infer bila kosong
         const hasAnyVariantPrice = (rawVariantPrices || []).some((r) => {
           const v = r?.price;
           if (v === null || v === undefined) return false;
@@ -449,8 +454,6 @@ export default function EditProductPage() {
 
         if (initialPricingType === "per_variant") {
           setPricingType("per_variant");
-
-          // Normalisasi rows
           const rows = rawVariantPrices.map((vp: any) => ({
             labels: Array.isArray(vp?.labels) ? vp.labels : [],
             price: vp?.price ?? null,
@@ -461,7 +464,6 @@ export default function EditProductPage() {
           }));
           setVariantPriceRows(rows);
 
-          // Build groupPrices/individualPrices sesuai dimensi variant
           const validAttrs = (attrs || []).filter((v) => v.options.some((o) => (o.id || o.en).trim() !== ""));
           if (validAttrs.length === 1) {
             const v0 = validAttrs[0];
@@ -497,7 +499,6 @@ export default function EditProductPage() {
             setIndividualPrices(ip);
             setGroupPrices({});
           } else {
-            // Tidak ada opsi valid
             setGroupPrices({});
             setIndividualPrices({});
           }
@@ -508,7 +509,6 @@ export default function EditProductPage() {
           setIndividualPrices({});
         }
 
-        // gallery
         const gal: Gallery[] = Array.isArray(d?.gallery)
           ? d.gallery.map((g: any, idx: number) => ({
               id: idx + 1,
@@ -521,7 +521,6 @@ export default function EditProductPage() {
           : [];
         setGalleries(gal);
 
-        // promotion
         if (Array.isArray(d?.related_products)) {
           const toOption = (p: any) => {
             const idNum = Number(p?.id);
@@ -689,7 +688,12 @@ export default function EditProductPage() {
       fd.append("category_id", String(categoryId));
       fd.append("pricing_mode", pricingMode);
       fd.append("slug", slug);
-      fd.append("heel_height_cm", formData.heel_height_cm || "0");
+
+      // NEW: kirim heel height sebagai desimal valid (titik)
+      const heelVal = normalizeDecimal(formData.heel_height_cm);
+      if (heelVal !== null) {
+        fd.append("heel_height_cm", String(heelVal)); // contoh: "12.5"
+      } // jika null/empty: tidak dikirim (atau kirim "" jika backend wajib ada)
 
       // bilingual fields
       fd.append("name[id]", formData.name_id || "");
@@ -724,7 +728,6 @@ export default function EditProductPage() {
           fd.append(`attributes[${i}][options][${j}][en]`, opt.en);
         });
       });
-      // alias kunci (jaga-jaga)
       attributes.forEach((attr, i) => {
         fd.append(`variant_attributes[${i}][name][id]`, attr.name.id);
         fd.append(`variant_attributes[${i}][name][en]`, attr.name.en);
@@ -748,12 +751,10 @@ export default function EditProductPage() {
 
       const pushVariantPrices = (items: VPrice[]) => {
         items.forEach((vp, i) => {
-          // kirim labels (sesuai kode lama)
           vp.labels.forEach((label, j) => {
             fd.append(`variant_prices[${i}][labels][${j}][id]`, label.id);
             fd.append(`variant_prices[${i}][labels][${j}][en]`, label.en);
           });
-          // sekaligus kirim KEY (kombinasi sisi kanan label) agar backend yang butuh key bisa terima
           const keyParts = vp.labels.map((l) => rightSideFromLabel(l.id || l.en || ""));
           const key = comboKeyPipe(keyParts.filter(Boolean));
           if (key) fd.append(`variant_prices[${i}][key]`, key);
@@ -817,7 +818,6 @@ export default function EditProductPage() {
         fd.append("related_products[]", String(id));
       });
 
-      // === Penting: gunakan POST + _method=PATCH ke proxy API ===
       await api.post(`/api/products/${productId}`, fd as any);
 
       setSuccessMessage("Produk berhasil diperbarui.");
@@ -1021,39 +1021,6 @@ export default function EditProductPage() {
                 </div>
               </div>
 
-              {/* Cover */}
-              <div className="bg-white rounded-xl border border-gray-200 p-6 mb-0">
-                <h3 className="text-lg font-semibold text-gray-900 mb-4">Cover</h3>
-                <div className="mb-4">
-                  <label htmlFor="cover_file" className="block text-sm font-medium text-gray-700 mb-2">
-                    Cover File
-                  </label>
-                  <input
-                    id="cover_file" type="file" accept="image/*"
-                    onChange={(e) => setCoverFile(e.target.files?.[0] || null)}
-                    className="block w-full text-sm text-gray-900 file:mr-4 file:rounded-md file:border-0 file:bg-gray-100 file:px-3 file:py-2 file:text-sm file:font-semibold file:text-gray-700 hover:file:bg-gray-200"
-                  />
-                  {(coverFile || formData.cover_url) && (
-                    <div className="mt-3">
-                      {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img
-                        src={
-                          coverFile
-                            ? URL.createObjectURL(coverFile)
-                            : (formData.cover_url as string) ||
-                              "data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNDgiIGhlaWdodD0iNDgiIHZpZXdCb3g9IjAgMCA0OCA0OCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iNDgiIGhlaWdodD0iNDgiIGZpbGw9IiNGM0Y0RjYiLz48cGF0aCBkPSJNMjQgMzZDMzAuNjI3NCAzNiAzNiAzMC42Mjc0IDM2IDI0QzM2IDE3LjM3MjYgMzAuNjI3NCAxMiAyNCAxMkMxNy4zNzI2IDEyIDEyIDE3LjM3MjYgMTIgMjRDMTIgMzAuNjI3NiAxNy4zNzI2IDM2IDI0IDM2WiIgc3Ryb2tlPSIjOUNBM0FGIiBzdHJva2Utd2lkdGg9IjIiLz48cGF0aCBkPSJNMjQgMjhDMjYuMjA5MSAyOCAyOCAyNi4yMDkxIDI4IDI0QzI4IDIxLjc5MDkgMjYuMjA5MSAyMCAyNCAyMEMyMS43OTA5IDIwIDIwIDIxLjc5MDkgMjAgMjRDMjAgMjYuMjA5MSAyMS43OTA5IDI4IDI0IDI4WiIgc3Ryb2tlPSIjOUNBM0FGIiBzdHJva2Utd2lkdGg9IjIiLz48L3N2Zz4="
-                        }
-                        alt="Cover preview"
-                        className="h-28 w-full max-w-xs rounded border object-cover"
-                        onLoad={(e) => {
-                          if (coverFile) URL.revokeObjectURL((e.target as HTMLImageElement).src);
-                        }}
-                      />
-                    </div>
-                  )}
-                </div>
-              </div>
-
               <ProductGallery
                 galleries={galleries}
                 onAddGallery={() =>
@@ -1199,46 +1166,44 @@ export default function EditProductPage() {
 
                               {isGroupOpen(firstOption) && (
                                 <div className="p-4">
-                                  {Array.from(new Set(combinations.map((c) => c[1])))
-                                    .filter(Boolean)
-                                    .map((secondOption) => (
-                                      <div key={String(secondOption)} className="mb-4">
-                                        <div className="bg-gray-100 px-3 py-2 border border-gray-200 rounded flex items-center justify-between">
-                                          <h6 className="font-medium text-gray-800">{String(secondOption)}</h6>
-                                          <button
-                                            type="button" onClick={() => toggleSub(firstOption, String(secondOption))}
-                                            className="text-gray-400 hover:text-gray-600" aria-label={`Toggle ${firstOption} - ${String(secondOption)}`}
-                                          >
-                                            <svg className={`w-4 h-4 transition-transform ${isSubOpen(firstOption, String(secondOption)) ? "" : "rotate-180"}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                                            </svg>
-                                          </button>
-                                        </div>
-
-                                        {isSubOpen(firstOption, String(secondOption)) && (
-                                          <div className="mt-2 space-y-2">
-                                            {combinations
-                                              .filter((c) => c[1] === secondOption)
-                                              .map((combination, idx) => {
-                                                const key = comboKeyDash(combination);
-                                                const thirdOption = combination[2];
-                                                return (
-                                                  <div key={`${key}-${idx}`} className="flex items-center gap-3 text-sm">
-                                                    <span className="w-24 text-gray-600">{thirdOption || "Price"}</span>
-                                                    <span className="text-gray-500">Rp</span>
-                                                    <input
-                                                      type="number" value={individualPrices[key] || ""} min={0}
-                                                      onChange={(e) => setIndividualPrices((p) => ({ ...p, [key]: e.target.value }))}
-                                                      className="px-2 py-1 border border-gray-300 rounded text-sm text-black w-32"
-                                                      placeholder="0"
-                                                    />
-                                                  </div>
-                                                );
-                                              })}
-                                          </div>
-                                        )}
+                                  {Array.from(new Set(combinations.map((c) => c[1]))).filter(Boolean).map((secondOption) => (
+                                    <div key={String(secondOption)} className="mb-4">
+                                      <div className="bg-gray-100 px-3 py-2 border border-gray-200 rounded flex items-center justify-between">
+                                        <h6 className="font-medium text-gray-800">{String(secondOption)}</h6>
+                                        <button
+                                          type="button" onClick={() => toggleSub(firstOption, String(secondOption))}
+                                          className="text-gray-400 hover:text-gray-600" aria-label={`Toggle ${firstOption} - ${String(secondOption)}`}
+                                        >
+                                          <svg className={`w-4 h-4 transition-transform ${isSubOpen(firstOption, String(secondOption)) ? "" : "rotate-180"}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                                          </svg>
+                                        </button>
                                       </div>
-                                    ))}
+
+                                      {isSubOpen(firstOption, String(secondOption)) && (
+                                        <div className="mt-2 space-y-2">
+                                          {combinations
+                                            .filter((c) => c[1] === secondOption)
+                                            .map((combination, idx) => {
+                                              const key = comboKeyDash(combination);
+                                              const thirdOption = combination[2];
+                                              return (
+                                                <div key={`${key}-${idx}`} className="flex items-center gap-3 text-sm">
+                                                  <span className="w-24 text-gray-600">{thirdOption || "Price"}</span>
+                                                  <span className="text-gray-500">Rp</span>
+                                                  <input
+                                                    type="number" value={individualPrices[key] || ""} min={0}
+                                                    onChange={(e) => setIndividualPrices((p) => ({ ...p, [key]: e.target.value }))}
+                                                    className="px-2 py-1 border border-gray-300 rounded text-sm text-black w-32"
+                                                    placeholder="0"
+                                                  />
+                                                </div>
+                                              );
+                                            })}
+                                        </div>
+                                      )}
+                                    </div>
+                                  ))}
                                 </div>
                               )}
                             </div>

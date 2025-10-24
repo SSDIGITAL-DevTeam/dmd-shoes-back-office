@@ -2,58 +2,77 @@
 export const runtime = "nodejs";
 
 import { NextRequest, NextResponse } from "next/server";
-import { makeApiUrl, readCookie } from "../../../_utils/backend";
+import { makeApiUrl } from "../../../_utils/backend";
 
-function authHeader(req: NextRequest) {
-  const h = req.headers.get("authorization");
-  if (h) return h;
-  const b = readCookie(req.headers.get("cookie") || "", "access_token");
-  return b ? `Bearer ${b}` : undefined;
-}
+const noStore = {
+  "content-type": "application/json",
+  "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+  Pragma: "no-cache",
+  Expires: "0",
+} as const;
 
-async function forward(req: NextRequest, method: string, slug: string[]) {
-  const url = makeApiUrl("/" + ["homepage", ...slug].join("/"));
-  const headers = new Headers(req.headers);
-  headers.set("accept", "application/json");
-  const a = authHeader(req);
-  if (a) headers.set("authorization", a);
-  headers.delete("content-length");
-  headers.delete("host");
+function buildAuthHeaders(req: NextRequest) {
+  const h = new Headers();
+  h.set("Accept", "application/json");
+  h.set("X-Requested-With", "XMLHttpRequest");
 
-  const ct = req.headers.get("content-type") || "";
-  const init: RequestInit = { method, headers, cache: "no-store" };
-
-  if (method !== "GET" && method !== "HEAD") {
-    if (ct.startsWith("multipart/form-data")) {
-      // stream FormData
-      // @ts-ignore
-      init.duplex = "half";
-      init.body = req.body as any;
-    } else {
-      init.body = await req.text(); // JSON/x-www-form-urlencoded
-    }
+  // Authorization dari header atau cookie access_token
+  const fromHeader = req.headers.get("authorization");
+  if (fromHeader) {
+    h.set("Authorization", fromHeader);
+  } else {
+    const rawCookie = req.headers.get("cookie") || "";
+    const token = rawCookie
+      .split(";")
+      .map((s) => s.trim())
+      .find((s) => s.startsWith("access_token="))
+      ?.split("=")[1];
+    if (token) h.set("Authorization", `Bearer ${decodeURIComponent(token)}`);
   }
 
-  const res = await fetch(url, init);
-  const buf = await res.arrayBuffer();
-  return new NextResponse(buf, {
-    status: res.status,
-    headers: { "content-type": res.headers.get("content-type") || "application/json" },
-  });
+  // Bawa cookie untuk kasus yang perlu
+  const cookie = req.headers.get("cookie");
+  if (cookie) h.set("Cookie", cookie);
+
+  return h;
 }
 
-export async function PUT(req: NextRequest, { params }: { params: { slug: string[] } }) {
-  return forward(req, "PUT", params.slug || []);
+async function proxy(req: NextRequest) {
+  const slug = req.nextUrl.pathname.split("/").slice(3); // /api/homepage/... -> ambil setelah 'homepage'
+  const upstreamUrl = makeApiUrl("/homepage/" + slug.join("/")) + req.nextUrl.search;
+
+  const headers = buildAuthHeaders(req);
+
+  // Siapkan opsi fetch
+  const init: RequestInit = {
+    method: req.method,
+    headers,
+    // penting untuk streaming body (hindari error duplex)
+    // @ts-expect-error - Node fetch custom
+    duplex: "half",
+    cache: "no-store",
+  };
+
+  // Forward body untuk metode yang membawa body
+  if (["POST", "PUT", "PATCH", "DELETE"].includes(req.method)) {
+    // NOTE: biarkan body apa adanya (JSON/FormData/stream)
+    init.body = req.body as any;
+  }
+
+  const r = await fetch(upstreamUrl, init);
+
+  // Teruskan hasil ke client
+  const resHeaders = new Headers(noStore);
+  // forward content-type dari upstream jika ada
+  const ct = r.headers.get("content-type");
+  if (ct) resHeaders.set("content-type", ct);
+
+  const body = r.body ? r.body : await r.arrayBuffer();
+  return new NextResponse(body as any, { status: r.status, headers: resHeaders });
 }
-export async function POST(req: NextRequest, { params }: { params: { slug: string[] } }) {
-  return forward(req, "POST", params.slug || []);
-}
-export async function PATCH(req: NextRequest, { params }: { params: { slug: string[] } }) {
-  return forward(req, "PATCH", params.slug || []);
-}
-export async function GET(req: NextRequest, { params }: { params: { slug: string[] } }) {
-  return forward(req, "GET", params.slug || []);
-}
-export async function DELETE(req: NextRequest, { params }: { params: { slug: string[] } }) {
-  return forward(req, "DELETE", params.slug || []);
-}
+
+export async function GET(req: NextRequest)    { return proxy(req); }
+export async function POST(req: NextRequest)   { return proxy(req); }
+export async function PUT(req: NextRequest)    { return proxy(req); }
+export async function PATCH(req: NextRequest)  { return proxy(req); }
+export async function DELETE(req: NextRequest) { return proxy(req); }
