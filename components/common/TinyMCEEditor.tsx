@@ -2,6 +2,7 @@
 
 import React, { useEffect } from "react";
 import { Editor } from "@tinymce/tinymce-react";
+import type { Editor as TinyMCEInstance } from "tinymce";
 
 type Props = {
   value?: string;
@@ -103,7 +104,7 @@ export const TinyMCEEditor: React.FC<Props> = ({
               h3   { font-size: 22px !important; }
               h4   { font-size: 18px !important; }
             `,
-          setup(editor) {
+          setup(editor: TinyMCEInstance) {
             editor.on("init", () => {
               editor.getBody().style.fontSize = "18px";
               // editor.getBody().style.lineHeight = '1.6';
