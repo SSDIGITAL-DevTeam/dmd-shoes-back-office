@@ -1,77 +1,95 @@
 // services/homepage.service.ts
 import api from "@/lib/fetching";
 
-export type LangText = { id?: string; en?: string };
+/** Envelope dasar dari BE */
 export type Envelope<T> = { status?: string; message?: string; data?: T };
 
-export type HeroPayloadByUrl = {
-  title?: LangText;
-  subtitle?: LangText;
-  button_text?: LangText;
-  button_link?: string | null;
-  image_url?: string | null;
+/** Bentuk payload GET /homepage dari BE */
+export type HomepageData = {
+  hero?: {
+    image_url?: string | null; // URL publik (storage atau http/https)
+    image?: string | null;     // raw path
+    link?: string | null;
+  };
+  video?: {
+    mode?: "youtube" | "file" | null;
+    url?: string | null;       // untuk youtube
+    file_url?: string | null;  // untuk file
+    file?: string | null;      // raw path
+  };
+  sliders?: Array<{
+    id: number;
+    group_key: string;
+    image_url: string | null;
+    image: string | null;
+    title?: string | null;
+    alt?: string | null;
+    link?: string | null;
+    sort: number;
+  }>;
 };
 
 export async function getHomepage() {
-  return api.get("/homepage"); // GET /api/homepage -> proxy -> Laravel /homepage
+  // GET /api/homepage -> proxy -> Laravel /api/v1/homepage
+  return api.get<Envelope<HomepageData>>("/homepage");
 }
 
-/** ===== HERO ===== */
-// Update hero pakai URL (JSON)
-export async function updateHeroWithUrl(payload: HeroPayloadByUrl) {
-  return api.put("/homepage/hero", payload);
-}
+/** ================== HERO ================== */
 
-// Update hero pakai file (FormData)
+// Update hero pakai file (multipart): field HARUS `image_file`, opsional `link`
 export async function updateHeroWithFile(fd: FormData) {
-  // fd bisa berisi: title[id], title[en], subtitle[id], subtitle[en], button_text[id], button_text[en], button_link, image (File)
-  return api.put("/homepage/hero", fd);
+  // Normalisasi: bila ada 'image' dari UI lama, ganti ke 'image_file'
+  if (fd.has("image") && !fd.has("image_file")) {
+    const val = fd.get("image") as File;
+    fd.delete("image");
+    if (val) fd.set("image_file", val);
+  }
+  return api.put<Envelope<any>>("/homepage/hero", fd);
 }
 
-/** ===== VIDEO ===== */
-export async function updateVideoByYoutubeUrl(payload: { youtube_url: string }) {
-  return api.put("/homepage/video", payload);
+// Update hero pakai URL (JSON): { image_url: "...", link?: "..." }
+export async function updateHeroWithUrl(payload: { image_url: string; link?: string | null }) {
+  return api.put<Envelope<any>>("/homepage/hero", payload);
 }
 
+/** ================== VIDEO ================== */
+
+// Pakai URL YouTube: { url: "https://..." }
+export async function updateVideoByYoutubeUrl(payload: { url: string }) {
+  return api.put<Envelope<any>>("/homepage/video", payload);
+}
+
+// Upload file: multipart dengan field HARUS `file`
 export async function updateVideoByFile(fd: FormData) {
-  // fd: { video: File }
-  return api.put("/homepage/video", fd);
+  // Normalisasi: kalau UI lama mengirim 'video', map ke 'file'
+  if (fd.has("video") && !fd.has("file")) {
+    const val = fd.get("video") as File;
+    fd.delete("video");
+    if (val) fd.set("file", val);
+  }
+  return api.put<Envelope<any>>("/homepage/video", fd);
 }
 
 export async function deleteVideo() {
-  return api.delete("/homepage/video");
+  return api.delete<Envelope<any>>("/homepage/video");
 }
 
-/** ===== SLIDERS ===== */
-export type SliderItem = {
-  id: number;
-  title?: LangText;
-  subtitle?: LangText;
-  button_text?: LangText;
-  button_link?: string | null;
-  image_url?: string | null;
-  order?: number;
-  status?: boolean;
-};
+/** ================== SLIDER ================== */
 
-export async function listSliders() {
-  return api.get("/homepage/sliders"); // { data: SliderItem[], ... }
-}
-
-export async function createSlider(fdOrJson: FormData | Record<string, any>) {
-  // boleh FormData (image file) atau JSON (pakai image_url)
-  return api.post("/homepage/sliders", fdOrJson);
-}
-
-export async function updateSlider(id: number, fdOrJson: FormData | Record<string, any>) {
-  return api.patch(`/homepage/sliders/${id}`, fdOrJson);
+export async function createSlider(fd: FormData) {
+  // Normalisasi: pastikan file = `image_file`, wajib ada `group`, `sort`
+  if (fd.has("image") && !fd.has("image_file")) {
+    const val = fd.get("image") as File;
+    fd.delete("image");
+    if (val) fd.set("image_file", val);
+  }
+  return api.post<Envelope<any>>("/homepage/sliders", fd);
 }
 
 export async function deleteSlider(id: number) {
-  return api.delete(`/homepage/sliders/${id}`);
+  return api.delete<Envelope<any>>(`/homepage/sliders/${id}`);
 }
 
-export async function reorderSliders(payload: { ids: number[] }) {
-  // contoh payload backend umum: { ids: [3,1,2] } urutan baru
-  return api.post("/homepage/sliders/reorder", payload);
+export async function reorderSliders(orders: Array<{ id: number; sort: number }>) {
+  return api.post<Envelope<any>>("/homepage/sliders/reorder", { orders });
 }

@@ -2,7 +2,7 @@
 export const runtime = "nodejs";
 
 import { NextRequest, NextResponse } from "next/server";
-import { makeApiUrl } from "../../../_utils/backend";
+import { makeApiUrl, readCookie } from "../../../_utils/backend";
 
 const noStore = {
   "content-type": "application/json",
@@ -16,21 +16,14 @@ function buildAuthHeaders(req: NextRequest) {
   h.set("Accept", "application/json");
   h.set("X-Requested-With", "XMLHttpRequest");
 
-  // Authorization dari header atau cookie access_token
   const fromHeader = req.headers.get("authorization");
   if (fromHeader) {
     h.set("Authorization", fromHeader);
   } else {
-    const rawCookie = req.headers.get("cookie") || "";
-    const token = rawCookie
-      .split(";")
-      .map((s) => s.trim())
-      .find((s) => s.startsWith("access_token="))
-      ?.split("=")[1];
-    if (token) h.set("Authorization", `Bearer ${decodeURIComponent(token)}`);
+    const token = readCookie(req.headers.get("cookie"), "access_token");
+    if (token) h.set("Authorization", `Bearer ${token}`);
   }
 
-  // Bawa cookie untuk kasus yang perlu
   const cookie = req.headers.get("cookie");
   if (cookie) h.set("Cookie", cookie);
 
@@ -38,37 +31,61 @@ function buildAuthHeaders(req: NextRequest) {
 }
 
 async function proxy(req: NextRequest) {
-  const slug = req.nextUrl.pathname.split("/").slice(3); // /api/homepage/... -> ambil setelah 'homepage'
-  const upstreamUrl = makeApiUrl("/homepage/" + slug.join("/")) + req.nextUrl.search;
+  try {
+    const slug = req.nextUrl.pathname.replace(/^\/api\/homepage\/?/, "");
+    const upstreamUrl = makeApiUrl(`homepage/${slug}`);
 
-  const headers = buildAuthHeaders(req);
+    const init: RequestInit & { duplex?: "half" } = {
+      method: req.method,
+      headers: buildAuthHeaders(req),
+    };
 
-  // Siapkan opsi fetch
-  const init: RequestInit = {
-    method: req.method,
-    headers,
-    // penting untuk streaming body (hindari error duplex)
-    // @ts-expect-error - Node fetch custom
-    duplex: "half",
-    cache: "no-store",
-  };
+    if (!["GET", "HEAD"].includes(req.method)) {
+      const ct = req.headers.get("content-type") || "";
 
-  // Forward body untuk metode yang membawa body
-  if (["POST", "PUT", "PATCH", "DELETE"].includes(req.method)) {
-    // NOTE: biarkan body apa adanya (JSON/FormData/stream)
-    init.body = req.body as any;
+      if (ct.startsWith("multipart/form-data")) {
+        // ✅ Cara stabil: re-build FormData (hindari forward stream mentah)
+        const inFd = await req.formData();
+        const outFd = new FormData();
+        // copy semua field/berkas apa adanya
+        inFd.forEach((val, key) => {
+          // val bisa string atau File (web File)
+          outFd.append(key, val as any);
+        });
+        init.body = outFd; // undici akan set boundary sendiri
+        // TIDAK perlu/tidak boleh set content-type manual
+      } else {
+        // JSON / x-www-form-urlencoded / raw
+        const buf = await req.arrayBuffer();
+        init.body = buf;
+        // biarkan header content-type dari client; kita tidak memaksa
+      }
+    }
+
+    const r = await fetch(upstreamUrl, init);
+
+    // Jika bukan OK, kirimkan body asli agar terlihat pesan BE (422/401/405)
+    const ctUp = r.headers.get("content-type") || "application/json";
+    const antiCache = new Headers(noStore);
+    antiCache.set("content-type", ctUp);
+
+    if (!r.ok) {
+      const errText = await r.text().catch(() => "");
+      return new NextResponse(errText || JSON.stringify({ status: r.status }), {
+        status: r.status,
+        headers: antiCache,
+      });
+    }
+
+    // OK → streamkan
+    const body = r.body ? r.body : await r.arrayBuffer();
+    return new NextResponse(body as any, { status: r.status, headers: antiCache });
+  } catch (e: any) {
+    return NextResponse.json(
+      { status: "error", message: e?.message || "Proxy error (/api/homepage/*)" },
+      { status: 503, headers: noStore }
+    );
   }
-
-  const r = await fetch(upstreamUrl, init);
-
-  // Teruskan hasil ke client
-  const resHeaders = new Headers(noStore);
-  // forward content-type dari upstream jika ada
-  const ct = r.headers.get("content-type");
-  if (ct) resHeaders.set("content-type", ct);
-
-  const body = r.body ? r.body : await r.arrayBuffer();
-  return new NextResponse(body as any, { status: r.status, headers: resHeaders });
 }
 
 export async function GET(req: NextRequest)    { return proxy(req); }

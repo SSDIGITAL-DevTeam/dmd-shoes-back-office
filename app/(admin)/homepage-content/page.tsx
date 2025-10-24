@@ -8,14 +8,12 @@ import {
   getHomepage,
   updateHeroWithFile,
   updateHeroWithUrl,
-  // pakai nama yg benar sesuai service
   updateVideoByYoutubeUrl,
   updateVideoByFile,
   deleteVideo as apiDeleteVideo,
   createSlider,
   deleteSlider as apiDeleteSlider,
   reorderSliders,
-  // HAPUS: type HomepagePayload (tidak diekspor di service)
 } from "@/services/homepage.service";
 
 type Media = {
@@ -139,10 +137,8 @@ export default function HomepageContentPage() {
   // revoke object URLs saat unmount untuk hindari memory leak
   useEffect(() => {
     return () => {
-      if (hero?.file && hero.url?.startsWith("blob:"))
-        URL.revokeObjectURL(hero.url);
-      if (video?.file && video.url?.startsWith("blob:"))
-        URL.revokeObjectURL(video.url);
+      if (hero?.file && hero.url?.startsWith("blob:")) URL.revokeObjectURL(hero.url);
+      if (video?.file && video.url?.startsWith("blob:")) URL.revokeObjectURL(video.url);
       [slider1, slider2].forEach((arr) =>
         arr.forEach((m) => {
           if (m.file && m.url?.startsWith("blob:")) URL.revokeObjectURL(m.url);
@@ -161,7 +157,7 @@ export default function HomepageContentPage() {
       const data: any = res?.data ?? res; // fallback kalau envelope
 
       // hero
-      const heroUrl: string | null = data?.hero?.image_url ?? null;
+      const heroUrl: string | null = data?.hero?.image_url ?? data?.hero?.url ?? null;
       initialRef.current.heroUrl = heroUrl;
       setHero(heroUrl ? { id: "hero", url: heroUrl } : null);
 
@@ -169,9 +165,7 @@ export default function HomepageContentPage() {
       const videoObj: any = data?.video ?? {};
       const vMode = (videoObj.mode ?? null) as "youtube" | "file" | null;
       const vUrl = (videoObj.url ?? null) as string | null;
-      const vFileUrl = (videoObj.file_url ?? videoObj.fileUrl ?? null) as
-        | string
-        | null;
+      const vFileUrl = (videoObj.file_url ?? videoObj.fileUrl ?? null) as string | null;
 
       initialRef.current.videoMode = vMode;
       initialRef.current.videoUrl = vUrl;
@@ -191,24 +185,38 @@ export default function HomepageContentPage() {
         setVideo(null);
       }
 
-      // sliders
-      const s1: Media[] = ((data?.sliders?.[GROUP1] as any[]) ?? []).map(
-        (it: any) => ({
-          id: it.id,
-          url: it.image_url,
-        })
-      );
-      const s2: Media[] = ((data?.sliders?.[GROUP2] as any[]) ?? []).map(
-        (it: any) => ({
-          id: it.id,
-          url: it.image_url,
-        })
-      );
+      // sliders — dukung 2 bentuk:
+      // 1) Array flat: [{id, image_url, group_key, ...}, ...]
+      // 2) Map per group: { [groupKey]: [{id, image_url, ...}], ... }
+      const rawSliders = data?.sliders;
+
+      let group1Arr: any[] = [];
+      let group2Arr: any[] = [];
+
+      if (Array.isArray(rawSliders)) {
+        group1Arr = rawSliders.filter((s: any) => (s?.group_key ?? s?.group) === GROUP1);
+        group2Arr = rawSliders.filter((s: any) => (s?.group_key ?? s?.group) === GROUP2);
+      } else if (rawSliders && typeof rawSliders === "object") {
+        group1Arr = Array.isArray(rawSliders[GROUP1]) ? rawSliders[GROUP1] : [];
+        group2Arr = Array.isArray(rawSliders[GROUP2]) ? rawSliders[GROUP2] : [];
+      }
+
+      const s1: Media[] = group1Arr.map((it: any) => ({
+        id: it.id,
+        url: it.image_url ?? it.url,
+      }));
+      const s2: Media[] = group2Arr.map((it: any) => ({
+        id: it.id,
+        url: it.image_url ?? it.url,
+      }));
+
       setSlider1(s1);
       setSlider2(s2);
+
       initialRef.current.slider1Ids = s1
         .map((x) => Number(x.id))
         .filter(Number.isFinite) as number[];
+
       initialRef.current.slider2Ids = s2
         .map((x) => Number(x.id))
         .filter(Number.isFinite) as number[];
@@ -239,12 +247,12 @@ export default function HomepageContentPage() {
 
       if (hero) {
         if (hero.file) {
-          // kirim sebagai FormData (pola product)
+          // kirim sebagai FormData (pola product) — gunakan image_file
           const fd = new FormData();
-          fd.append("image", hero.file);
-          await updateHeroWithFile(fd as any); // cast supaya aman ke 2 versi service (File/FormData)
+          fd.append("image_file", hero.file);
+          await updateHeroWithFile(fd as any);
         } else if (heroChangedUrl && isHttpUrl(hero.url)) {
-          await updateHeroWithUrl({ image_url: hero.url } as any); // dukung versi yg terima string atau object
+          await updateHeroWithUrl({ image_url: hero.url } as any);
         }
       }
 
@@ -258,12 +266,14 @@ export default function HomepageContentPage() {
           trimmed &&
           (initialMode !== "youtube" || trimmed !== initialRef.current.videoUrl)
         ) {
-          await updateVideoByYoutubeUrl({ youtube_url: trimmed } as any);
+          // gunakan { url } (bukan youtube_url)
+          await updateVideoByYoutubeUrl({ url: trimmed } as any);
         }
       } else {
         if (video?.file) {
           const fd = new FormData();
-          fd.append("video", video.file);
+          // gunakan field name `file` untuk upload video
+          fd.append("file", video.file);
           await updateVideoByFile(fd as any);
         }
       }
@@ -295,22 +305,22 @@ export default function HomepageContentPage() {
       for (let i = 0; i < new1.length; i++) {
         const m = new1[i];
         if (m.file) {
-          const sort = slider1.findIndex((x) => x.id === m.id);
+          const sort = Math.max(0, slider1.findIndex((x) => x.id === m.id));
           const fd = new FormData();
-          fd.append("image", m.file);
+          fd.append("image_file", m.file);
           fd.append("group", GROUP1);
-          fd.append("sort", String(Math.max(0, sort)));
+          fd.append("sort", String(sort));
           await createSlider(fd as any);
         }
       }
       for (let i = 0; i < new2.length; i++) {
         const m = new2[i];
         if (m.file) {
-          const sort = slider2.findIndex((x) => x.id === m.id);
+          const sort = Math.max(0, slider2.findIndex((x) => x.id === m.id));
           const fd = new FormData();
-          fd.append("image", m.file);
+          fd.append("image_file", m.file);
           fd.append("group", GROUP2);
-          fd.append("sort", String(Math.max(0, sort)));
+          fd.append("sort", String(sort));
           await createSlider(fd as any);
         }
       }
@@ -322,6 +332,7 @@ export default function HomepageContentPage() {
           return idNum !== null ? { id: idNum, sort: i } : null;
         })
         .filter(Boolean) as Array<{ id: number; sort: number }>;
+
       const orders2 = slider2
         .map((m, i) => {
           const idNum = toNumericId(m.id);
@@ -332,21 +343,12 @@ export default function HomepageContentPage() {
       const now1OnlyIds = orders1.map((o) => o.id);
       const now2OnlyIds = orders2.map((o) => o.id);
 
-      // panggil reorderSliders dengan cast supaya cocok ke 2 versi signature
-      if (
-        !idsEqual(now1OnlyIds, initialRef.current.slider1Ids) &&
-        orders1.length
-      ) {
-        await (reorderSliders as any)(GROUP1, orders1);
-        // alternatif service lama:
-        // await (reorderSliders as any)({ group: GROUP1, orders: orders1 });
-        // await (reorderSliders as any)({ ids: now1OnlyIds });
+      // panggil reorderSliders dengan body yang jelas { group, orders }
+      if (!idsEqual(now1OnlyIds, initialRef.current.slider1Ids) && orders1.length) {
+        await (reorderSliders as any)({ group: GROUP1, orders: orders1 });
       }
-      if (
-        !idsEqual(now2OnlyIds, initialRef.current.slider2Ids) &&
-        orders2.length
-      ) {
-        await (reorderSliders as any)(GROUP2, orders2);
+      if (!idsEqual(now2OnlyIds, initialRef.current.slider2Ids) && orders2.length) {
+        await (reorderSliders as any)({ group: GROUP2, orders: orders2 });
       }
 
       setToast({
@@ -638,12 +640,11 @@ export default function HomepageContentPage() {
                     if (!orders.length) return;
 
                     const idsOnly = orders.map((o) => o.id);
-                    if (idsEqual(idsOnly, initialRef.current.slider1Ids))
-                      return; // tidak berubah
+                    if (idsEqual(idsOnly, initialRef.current.slider1Ids)) return; // tidak berubah
 
                     try {
                       setSaving(true);
-                      await (reorderSliders as any)(GROUP1, orders);
+                      await (reorderSliders as any)({ group: GROUP1, orders });
                       setToast({
                         show: true,
                         msg: "Urutan slider 1 disimpan",
@@ -712,9 +713,7 @@ export default function HomepageContentPage() {
                       } else {
                         if (img.file && img.url?.startsWith("blob:"))
                           URL.revokeObjectURL(img.url);
-                        setSlider1((prev) =>
-                          prev.filter((i) => i.id !== img.id)
-                        );
+                        setSlider1((prev) => prev.filter((i) => i.id !== img.id));
                       }
                     }}
                   >
@@ -760,12 +759,11 @@ export default function HomepageContentPage() {
                     if (!orders.length) return;
 
                     const idsOnly = orders.map((o) => o.id);
-                    if (idsEqual(idsOnly, initialRef.current.slider2Ids))
-                      return;
+                    if (idsEqual(idsOnly, initialRef.current.slider2Ids)) return;
 
                     try {
                       setSaving(true);
-                      await (reorderSliders as any)(GROUP2, orders);
+                      await (reorderSliders as any)({ group: GROUP2, orders });
                       setToast({
                         show: true,
                         msg: "Urutan slider 2 disimpan",
@@ -834,9 +832,7 @@ export default function HomepageContentPage() {
                       } else {
                         if (img.file && img.url?.startsWith("blob:"))
                           URL.revokeObjectURL(img.url);
-                        setSlider2((prev) =>
-                          prev.filter((i) => i.id !== img.id)
-                        );
+                        setSlider2((prev) => prev.filter((i) => i.id !== img.id));
                       }
                     }}
                   >
