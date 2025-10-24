@@ -39,9 +39,12 @@ function makeAuthHeaders(req: NextRequest) {
  * GET /api/meta/pages/:pageId/tags
  * → forwards to {{baseURL}}/api/v1/meta/pages/:pageId/tags[?locale=xx]
  */
-export async function GET(req: NextRequest, ctx: { params: { pageId: string } }) {
+export async function GET(
+  req: NextRequest,
+  ctx: { params: Promise<{ pageId: string }> }
+) {
   try {
-    const { pageId } = ctx.params;
+    const { pageId } = await ctx.params;
     const { searchParams } = new URL(req.url);
     const locale = searchParams.get("locale") ?? ""; // optional
 
@@ -76,9 +79,12 @@ export async function GET(req: NextRequest, ctx: { params: { pageId: string } })
  * → forwards to {{baseURL}}/api/v1/meta/pages/:pageId/tags
  * (body diteruskan apa adanya; gunakan JSON atau form-data sesuai backend)
  */
-export async function POST(req: NextRequest, ctx: { params: { pageId: string } }) {
+export async function POST(
+  req: NextRequest,
+  ctx: { params: Promise<{ pageId: string }> }
+) {
   try {
-    const { pageId } = ctx.params;
+    const { pageId } = await ctx.params;
     const body = await req.text(); // pass-through body persis
     const url = makeApiUrl(`/meta/pages/${encodeURIComponent(pageId)}/tags`);
 

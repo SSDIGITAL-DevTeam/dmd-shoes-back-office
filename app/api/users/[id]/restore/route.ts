@@ -12,15 +12,19 @@ function readCookie(header: string | null, name: string) {
 
 const apiUrl = (id: string) => makeApiUrl(`users/${encodeURIComponent(id)}/restore`);
 
-export async function POST(req: Request, { params }: { params: { id: string } }) {
+export async function POST(
+  req: Request,
+  ctx: { params: Promise<{ id: string }> }
+) {
   try {
     ensureEnvOrThrow();
+    const { id } = await ctx.params;
 
     const headers = new Headers({ Accept: "application/json" });
     const token = readCookie(req.headers.get("cookie"), "access_token");
     if (token) headers.set("Authorization", `Bearer ${token}`);
 
-    const res = await fetch(apiUrl(params.id), {
+    const res = await fetch(apiUrl(id), {
       method: "POST",
       headers,
       cache: "no-store",

@@ -12,9 +12,13 @@ function readCookie(header: string | null, name: string) {
 
 const apiUrl = (id: string) => makeApiUrl(`users/${encodeURIComponent(id)}/status`);
 
-export async function PATCH(req: Request, { params }: { params: { id: string } }) {
+export async function PATCH(
+  req: Request,
+  ctx: { params: Promise<{ id: string }> }
+) {
   try {
     ensureEnvOrThrow();
+    const { id } = await ctx.params;
     const body = await req.json().catch(() => ({}));
 
     const headers = new Headers({
@@ -24,7 +28,7 @@ export async function PATCH(req: Request, { params }: { params: { id: string } }
     const token = readCookie(req.headers.get("cookie"), "access_token");
     if (token) headers.set("Authorization", `Bearer ${token}`);
 
-    const res = await fetch(apiUrl(params.id), {
+    const res = await fetch(apiUrl(id), {
       method: "PATCH",
       headers,
       body: JSON.stringify(body),

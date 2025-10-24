@@ -13,14 +13,18 @@ function fwd(req: NextRequest) {
     };
 }
 
-export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
+export async function PATCH(
+    req: NextRequest,
+    ctx: { params: Promise<{ id: string }> }
+) {
     ensureEnvOrThrow();
 
+    const { id } = await ctx.params;
     const url = new URL(req.url);
     const lang = url.searchParams.get("lang") || "";
     const body = await req.json().catch(() => ({}));
 
-    const upstreamUrl = makeApiUrl(`articles/${params.id}/status`);
+    const upstreamUrl = makeApiUrl(`articles/${id}/status`);
     const res = await fetch(upstreamUrl, {
         method: "PATCH",
         headers: { ...fwd(req), "Content-Type": "application/json" },
@@ -35,7 +39,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
         return NextResponse.json(payload, { status: res.status });
     }
 
-    const detailUrl = makeApiUrl(`articles/${params.id}${lang ? `?lang=${encodeURIComponent(lang)}` : ""}`);
+    const detailUrl = makeApiUrl(`articles/${id}${lang ? `?lang=${encodeURIComponent(lang)}` : ""}`);
     const detailRes = await fetch(detailUrl, { headers: fwd(req), cache: "no-store" });
     const detail = await detailRes.json().catch(() => ({}));
 

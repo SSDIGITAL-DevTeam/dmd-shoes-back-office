@@ -32,9 +32,12 @@ function makeAuthHeaders(req: NextRequest) {
 }
 
 // GET /api/meta/pages/:pageId/tags/:tagId
-export async function GET(_req: NextRequest, ctx: { params: { pageId: string; tagId: string } }) {
+export async function GET(
+  _req: NextRequest,
+  ctx: { params: Promise<{ pageId: string; tagId: string }> }
+) {
   try {
-    const { pageId, tagId } = ctx.params;
+    const { pageId, tagId } = await ctx.params;
     const url = makeApiUrl(`/meta/pages/${encodeURIComponent(pageId)}/tags/${encodeURIComponent(tagId)}`);
     const res = await fetch(url, {
       method: "GET",
@@ -52,9 +55,12 @@ export async function GET(_req: NextRequest, ctx: { params: { pageId: string; ta
 }
 
 // PATCH /api/meta/pages/:pageId/tags/:tagId
-export async function PATCH(req: NextRequest, ctx: { params: { pageId: string; tagId: string } }) {
+export async function PATCH(
+  req: NextRequest,
+  ctx: { params: Promise<{ pageId: string; tagId: string }> }
+) {
   try {
-    const { pageId, tagId } = ctx.params;
+    const { pageId, tagId } = await ctx.params;
     const body = await req.text();
     const url = makeApiUrl(`/meta/pages/${encodeURIComponent(pageId)}/tags/${encodeURIComponent(tagId)}`);
 
@@ -78,9 +84,12 @@ export async function PATCH(req: NextRequest, ctx: { params: { pageId: string; t
 }
 
 // DELETE /api/meta/pages/:pageId/tags/:tagId
-export async function DELETE(req: NextRequest, ctx: { params: { pageId: string; tagId: string } }) {
+export async function DELETE(
+  req: NextRequest,
+  ctx: { params: Promise<{ pageId: string; tagId: string }> }
+) {
   try {
-    const { pageId, tagId } = ctx.params;
+    const { pageId, tagId } = await ctx.params;
     const url = makeApiUrl(`/meta/pages/${encodeURIComponent(pageId)}/tags/${encodeURIComponent(tagId)}`);
 
     const res = await fetch(url, {
