@@ -69,8 +69,6 @@ export async function GET(req: NextRequest) {
       method: "GET",
       headers: makeAuthHeaders(req),
       cache: "no-store",
-      // @ts-ignore
-      next: { revalidate: 0 },
       credentials: "include",
     });
 
