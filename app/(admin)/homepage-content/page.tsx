@@ -239,6 +239,7 @@ export default function HomepageContentPage() {
      ======================= */
   const onSave = async () => {
     try {
+      if (saving) return;
       setSaving(true);
 
       // ===== HERO =====
@@ -258,6 +259,7 @@ export default function HomepageContentPage() {
 
       // ===== VIDEO =====
       const initialMode = initialRef.current.videoMode; // 'youtube' | 'file' | null
+
       if (videoMode === "link") {
         const trimmed = youtubeUrl.trim();
         if (!trimmed && (initialMode === "youtube" || initialMode === "file")) {
@@ -266,14 +268,18 @@ export default function HomepageContentPage() {
           trimmed &&
           (initialMode !== "youtube" || trimmed !== initialRef.current.videoUrl)
         ) {
-          // gunakan { url } (bukan youtube_url)
-          await updateVideoByYoutubeUrl({ url: trimmed } as any);
+          // ⬇⬇⬇ PENTING: tetap pakai service-mu, tapi kita tambahkan field 'mode'
+          await updateVideoByYoutubeUrl(
+            { url: trimmed, youtube_url: trimmed, mode: "youtube" } as any
+          );
         }
       } else {
         if (video?.file) {
           const fd = new FormData();
           // gunakan field name `file` untuk upload video
           fd.append("file", video.file);
+          // NOTE: service-mu sudah membuat FormData baru di dalam dan menambahkan _method=PUT.
+          // Jika BE butuh 'mode', idealnya ubah service; tapi umumnya jalur file lolos tanpa 'mode'.
           await updateVideoByFile(fd as any);
         }
       }
@@ -493,9 +499,14 @@ export default function HomepageContentPage() {
                   placeholder="Paste the YouTube video URL here"
                   className="w-full rounded-md border border-gray-300 text-black px-3 py-2 text-sm"
                   value={youtubeUrl}
-                  onChange={(e) => setYoutubeUrl(e.target.value)}
+                  onChange={(e) => {
+                    setYoutubeUrl(e.target.value);
+                    // Auto pilih mode link saat user mengisi URL
+                    if (videoMode !== "link") setVideoMode("link");
+                  }}
                 />
-                {initialRef.current.videoMode && (
+                {(initialRef.current.videoMode === "youtube" ||
+                  initialRef.current.videoMode === "file") && (
                   <button
                     type="button"
                     className={deleteBtn}
@@ -562,7 +573,8 @@ export default function HomepageContentPage() {
                         <Trash2 className="h-4 w-4" />
                         Remove
                       </button>
-                      {initialRef.current.videoMode === "file" && (
+                      {(initialRef.current.videoMode === "file" ||
+                        initialRef.current.videoMode === "youtube") && (
                         <button
                           onClick={async () => {
                             try {
@@ -595,7 +607,11 @@ export default function HomepageContentPage() {
                 ) : (
                   <label
                     className={dashed}
-                    onClick={() => pickFile(videoInput)}
+                    onClick={() => {
+                      // Auto pilih mode upload saat user memilih file
+                      if (videoMode !== "upload") setVideoMode("upload");
+                      pickFile(videoInput);
+                    }}
                     aria-label="Upload video"
                   >
                     <Upload className="h-5 w-5" />
@@ -607,7 +623,12 @@ export default function HomepageContentPage() {
                   type="file"
                   accept="video/*"
                   hidden
-                  onChange={(e) => onPickOne(e, setVideo)}
+                  onChange={(e) => {
+                    onPickOne(e, (m) => {
+                      setVideo(m);
+                      if (videoMode !== "upload") setVideoMode("upload");
+                    });
+                  }}
                 />
               </>
             )}

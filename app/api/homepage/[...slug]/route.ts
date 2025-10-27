@@ -1,9 +1,9 @@
-// app/api/homepage/[...slug]/route.ts
 export const runtime = "nodejs";
 
 import { NextRequest, NextResponse } from "next/server";
 import { makeApiUrl, readCookie } from "../../../_utils/backend";
 
+/** Anti-cache headers */
 const noStore = {
   "content-type": "application/json",
   "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
@@ -11,11 +11,13 @@ const noStore = {
   Expires: "0",
 } as const;
 
+/** Bangun header auth + cookie dasar */
 function buildAuthHeaders(req: NextRequest) {
   const h = new Headers();
   h.set("Accept", "application/json");
   h.set("X-Requested-With", "XMLHttpRequest");
 
+  // Ambil token dari Authorization header atau cookie
   const fromHeader = req.headers.get("authorization");
   if (fromHeader) {
     h.set("Authorization", fromHeader);
@@ -30,41 +32,45 @@ function buildAuthHeaders(req: NextRequest) {
   return h;
 }
 
+/** Proxy utama */
 async function proxy(req: NextRequest) {
   try {
     const slug = req.nextUrl.pathname.replace(/^\/api\/homepage\/?/, "");
     const upstreamUrl = makeApiUrl(`homepage/${slug}`);
 
+    const clientCT = req.headers.get("content-type") || "";
+    const upstreamHeaders = buildAuthHeaders(req);
+
+    // ⚠️ Teruskan Content-Type dari client untuk non-multipart
+    if (clientCT && !clientCT.startsWith("multipart/form-data")) {
+      upstreamHeaders.set("Content-Type", clientCT);
+    }
+
     const init: RequestInit & { duplex?: "half" } = {
       method: req.method,
-      headers: buildAuthHeaders(req),
+      headers: upstreamHeaders,
     };
 
+    // Hanya kirim body untuk method non-GET/HEAD
     if (!["GET", "HEAD"].includes(req.method)) {
-      const ct = req.headers.get("content-type") || "";
-
-      if (ct.startsWith("multipart/form-data")) {
-        // ✅ Cara stabil: re-build FormData (hindari forward stream mentah)
+      if (clientCT.startsWith("multipart/form-data")) {
+        // ✅ Rebuild FormData agar stabil (hindari forward stream mentah)
         const inFd = await req.formData();
         const outFd = new FormData();
-        // copy semua field/berkas apa adanya
-        inFd.forEach((val, key) => {
-          // val bisa string atau File (web File)
-          outFd.append(key, val as any);
-        });
-        init.body = outFd; // undici akan set boundary sendiri
-        // TIDAK perlu/tidak boleh set content-type manual
+        inFd.forEach((val, key) => outFd.append(key, val as any));
+        init.body = outFd;
+        // ❌ Jangan set Content-Type manual, biar undici yang urus boundary
       } else {
-        // JSON / x-www-form-urlencoded / raw
+        // JSON / urlencoded / raw
         const buf = await req.arrayBuffer();
         init.body = buf;
-        // biarkan header content-type dari client; kita tidak memaksa
+        // Content-Type sudah diteruskan dari client di atas
       }
     }
 
     const r = await fetch(upstreamUrl, init);
 
-    // Jika bukan OK, kirimkan body asli agar terlihat pesan BE (422/401/405)
+    // === Response handling ===
     const ctUp = r.headers.get("content-type") || "application/json";
     const antiCache = new Headers(noStore);
     antiCache.set("content-type", ctUp);
@@ -77,19 +83,35 @@ async function proxy(req: NextRequest) {
       });
     }
 
-    // OK → streamkan
     const body = r.body ? r.body : await r.arrayBuffer();
-    return new NextResponse(body as any, { status: r.status, headers: antiCache });
+    return new NextResponse(body as any, {
+      status: r.status,
+      headers: antiCache,
+    });
   } catch (e: any) {
     return NextResponse.json(
-      { status: "error", message: e?.message || "Proxy error (/api/homepage/*)" },
+      {
+        status: "error",
+        message: e?.message || "Proxy error (/api/homepage/*)",
+      },
       { status: 503, headers: noStore }
     );
   }
 }
 
-export async function GET(req: NextRequest)    { return proxy(req); }
-export async function POST(req: NextRequest)   { return proxy(req); }
-export async function PUT(req: NextRequest)    { return proxy(req); }
-export async function PATCH(req: NextRequest)  { return proxy(req); }
-export async function DELETE(req: NextRequest) { return proxy(req); }
+/** Bind semua method ke proxy */
+export async function GET(req: NextRequest) {
+  return proxy(req);
+}
+export async function POST(req: NextRequest) {
+  return proxy(req);
+}
+export async function PUT(req: NextRequest) {
+  return proxy(req);
+}
+export async function PATCH(req: NextRequest) {
+  return proxy(req);
+}
+export async function DELETE(req: NextRequest) {
+  return proxy(req);
+}
