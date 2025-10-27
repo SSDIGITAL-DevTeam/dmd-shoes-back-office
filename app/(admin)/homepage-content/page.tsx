@@ -561,18 +561,6 @@ export default function HomepageContentPage() {
                         <Upload className="h-4 w-4" />
                         Change Video
                       </button>
-                      <button
-                        onClick={() => {
-                          if (video?.file && video.url?.startsWith("blob:"))
-                            URL.revokeObjectURL(video.url);
-                          setVideo(null);
-                        }}
-                        className={deleteBtn}
-                        aria-label="Delete Video (local state)"
-                      >
-                        <Trash2 className="h-4 w-4" />
-                        Remove
-                      </button>
                       {(initialRef.current.videoMode === "file" ||
                         initialRef.current.videoMode === "youtube") && (
                         <button
@@ -599,7 +587,7 @@ export default function HomepageContentPage() {
                           className={deleteBtn}
                           aria-label="Delete Video from server"
                         >
-                          <Trash2 className="h-4 w-4" /> Delete Current
+                          <Trash2 className="h-4 w-4" /> Remove
                         </button>
                       )}
                     </div>
