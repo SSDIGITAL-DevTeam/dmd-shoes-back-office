@@ -1,6 +1,8 @@
 // services/meta.service.ts
+import { apiGet, apiSend } from "@/lib/api/client";
+
 /** =======================
- *  Types (seragam dgn products.service.ts)
+ *  Types (seragam dgn articles.service.ts / products.service.ts)
  *  ======================= */
 export type I18nText = string | { id?: string; en?: string } | null | undefined;
 
@@ -26,14 +28,14 @@ export type ListMeta = {
 };
 
 export type ListResponse<T> = {
-  status?: string;
+  status: string;
   message?: string;
   data: T[];
   meta: ListMeta;
 };
 
 export type DetailResponse<T> = {
-  status?: string;
+  status: string;
   message?: string;
   data: T;
 };
@@ -50,7 +52,7 @@ export type MetaTagItem = ItemBase & {
   // BE lama bisa kirim key/value, BE baru pakai attr/identifier
   attr: "name" | "property" | "http-equiv" | "charset";
   identifier: string;               // e.g. description, og:title
-  // Legacy aliases:
+  // Legacy aliases
   key?: string;
   value?: string;
   content: string | null;
@@ -65,7 +67,7 @@ export type CreateMetaTagPayload = {
   locale?: "id" | "en"; // default di BE: "id"
   attr: "name" | "property" | "http-equiv" | "charset";
   identifier: string;
-  // Legacy compatibility (biarkan jika caller lama masih mengirim ini)
+  // Legacy compatibility (caller lama)
   key?: string;
   value?: string;
   content?: string | null;
@@ -76,13 +78,8 @@ export type CreateMetaTagPayload = {
 export type UpdateMetaTagPayload = Partial<CreateMetaTagPayload>;
 
 /** =======================
- *  Utils seragam
+ *  Utils
  *  ======================= */
-function jsonOrEmpty(text: string) {
-  if (!text) return {};
-  try { return JSON.parse(text); } catch { return {}; }
-}
-
 function normalizeMeta(m: any, fallbackCount = 0): ListMeta {
   return {
     current_page: Number(m?.current_page ?? 1),
@@ -93,12 +90,8 @@ function normalizeMeta(m: any, fallbackCount = 0): ListMeta {
 }
 
 function normalizeTagRow(row: any): MetaTagItem {
-  // Kompatibilitas BE lama vs baru:
-  const attr = row?.attr ?? row?.key;
-  const identifier = row?.identifier ?? row?.value;
-
-  // content tetap diambil dari 'content' jika ada. (jangan ambil dari value—value adalah identifier)
-  const content = row?.content ?? null;
+  const attr = row?.attr ?? row?.key;               // compat
+  const identifier = row?.identifier ?? row?.value; // compat
 
   return {
     id: row?.id,
@@ -108,16 +101,16 @@ function normalizeTagRow(row: any): MetaTagItem {
     identifier,
     key: row?.key,
     value: row?.value,
-    content,
+    // penting: 'content' adalah nilai konten meta, bukan identifier
+    content: row?.content ?? null,
     is_active: Boolean(
       row?.is_active ??
       (typeof row?.status === "string"
-        ? row?.status.toLowerCase() === "active" || row?.status.toLowerCase() === "publish"
+        ? ["active", "publish"].includes(row.status.toLowerCase())
         : row?.status ?? true)
     ),
     sort_order: Number(row?.sort_order ?? row?.sortOrder ?? 0),
 
-    // Base
     status: row?.status,
     created_at: row?.created_at,
     updated_at: row?.updated_at,
@@ -125,178 +118,117 @@ function normalizeTagRow(row: any): MetaTagItem {
   };
 }
 
-type ListParams = {
-  // umum
-  page?: number;
-  perPage?: number;
-  per_page?: number;
-  // khusus list tag
-  locale?: "id" | "en";
-};
-
-function buildQuery(p: ListParams = {}) {
-  const s = new URLSearchParams();
-  if (p.page) s.set("page", String(p.page));
-  const per = p.per_page ?? p.perPage;
-  if (per) s.set("per_page", String(per));
-  if (p.locale) s.set("locale", p.locale);
-  return s.toString();
+function toCompatPayload(payload: CreateMetaTagPayload | UpdateMetaTagPayload) {
+  const result: any = { ...payload };
+  if ("attr" in result && result.attr !== undefined) {
+    result.key = result.key ?? result.attr;
+  }
+  if ("identifier" in result && result.identifier !== undefined) {
+    result.value = result.value ?? result.identifier;
+  }
+  // biarkan 'content' apa adanya
+  return result;
 }
-
-const baseHeaders = { Accept: "application/json", "X-Requested-With": "XMLHttpRequest" } as const;
 
 /** =======================
  *  Pages
  *  ======================= */
-
-// GET list pages (public/admin—via proxy Next /api/meta/pages)
-export async function getPages(): Promise<{ status?: string; message?: string; data: MetaPage[] }> {
-  const res = await fetch(`/api/meta/pages`, { method: "GET", headers: baseHeaders, cache: "no-store" });
-  const text = await res.text();
-  const data = jsonOrEmpty(text);
-  if (!res.ok) throw new Error(data?.message || `Get pages failed (${res.status})`);
-
-  const rows: MetaPage[] = Array.isArray(data?.data)
-    ? data.data
-    : Array.isArray(data)
-      ? data
-      : [];
-
-  return { status: data?.status || "success", message: data?.message, data: rows };
+export async function getPages() {
+  return apiGet<{ status: string; message?: string; data: MetaPage[] }>(`/api/meta/pages`);
 }
 
 /** =======================
  *  Tags (per page)
  *  ======================= */
+export type ListTagsParams = {
+  page?: number;
+  perPage?: number;     // FE alias — akan dikirim sebagai per_page
+  locale?: "id" | "en";
+};
 
-// GET meta tags by page (admin list) — dukung locale & pagination
 export async function getPageTags(
   pageId: number | string,
-  params: ListParams = {}
+  params: ListTagsParams = {}
 ): Promise<ListResponse<MetaTagItem>> {
-  const qs = buildQuery(params);
-  const res = await fetch(`/api/meta/pages/${pageId}/tags${qs ? `?${qs}` : ""}`, {
-    method: "GET",
-    headers: baseHeaders,
-    cache: "no-store",
+  const { page = 1, perPage = 12, locale } = params;
+  const res = await apiGet<any>(`/api/meta/pages/${pageId}/tags`, {
+    page,
+    per_page: perPage,
+    ...(locale ? { locale } : {}),
   });
 
-  const text = await res.text();
-  const data = jsonOrEmpty(text);
-  if (!res.ok) throw new Error(data?.message || `Get meta tags failed (${res.status})`);
-
-  const rawRows: any[] = Array.isArray(data?.data)
-    ? data.data
-    : Array.isArray(data)
-      ? data
+  const rawRows: any[] = Array.isArray(res?.data)
+    ? res.data
+    : Array.isArray(res)
+      ? (res as any)
       : [];
 
   const rows = rawRows.map(normalizeTagRow);
-  const meta = normalizeMeta(data?.meta, rows.length);
+  const meta = normalizeMeta((res as any)?.meta, rows.length);
 
-  return { status: data?.status || "success", message: data?.message, data: rows, meta };
+  return {
+    status: (res as any)?.status || "success",
+    message: (res as any)?.message,
+    data: rows,
+    meta,
+  };
 }
 
-// (opsional) GET single tag detail — hanya jika endpoint tersedia di BE
+// (opsional) GET single tag — hanya jika BE menyediakan endpoint
 export async function getTag(
   pageId: number | string,
   tagId: number | string
 ): Promise<DetailResponse<MetaTagItem>> {
-  const res = await fetch(`/api/meta/pages/${pageId}/tags/${tagId}`, {
-    method: "GET",
-    headers: baseHeaders,
-    cache: "no-store",
-  });
-  const text = await res.text();
-  const data = jsonOrEmpty(text);
-  if (!res.ok) throw new Error(data?.message || `Get tag failed (${res.status})`);
-
-  const row = data?.data ?? data;
+  const res = await apiGet<any>(`/api/meta/pages/${pageId}/tags/${tagId}`);
+  const row = (res as any)?.data ?? res;
   return {
-    status: data?.status || "success",
-    message: data?.message,
+    status: (res as any)?.status || "success",
+    message: (res as any)?.message,
     data: normalizeTagRow(row),
   };
 }
 
-// Helper: bentuk payload kompatibel BE lama/baru
-function toCompatPayload(payload: CreateMetaTagPayload | UpdateMetaTagPayload) {
-  const result: any = { ...payload };
-
-  // Pastikan field utama tersedia:
-  if (payload && "attr" in payload && payload.attr !== undefined) {
-    result.key = payload.key ?? payload.attr;
-  }
-  if (payload && "identifier" in payload && payload.identifier !== undefined) {
-    result.value = payload.value ?? payload.identifier;
-  }
-
-  // Biarkan 'content' apa adanya (jangan diisi dari value).
-  // Field opsional lain tetap dikirim jika ada.
-
-  return result;
-}
-
-// POST create tag (admin)
+/** =======================
+ *  Create / Update / Delete
+ *  ======================= */
 export async function createTag(
   pageId: number | string,
   payload: CreateMetaTagPayload
 ): Promise<DetailResponse<MetaTagItem>> {
-  const res = await fetch(`/api/meta/pages/${pageId}/tags`, {
-    method: "POST",
-    headers: { ...baseHeaders, "Content-Type": "application/json" },
-    body: JSON.stringify(toCompatPayload(payload)),
-  });
-
-  const text = await res.text();
-  const data = jsonOrEmpty(text);
-  if (!res.ok) throw new Error(data?.message || `Create tag failed (${res.status})`);
-
-  const row = data?.data ?? data;
+  const res = await apiSend<any>(`/api/meta/pages/${pageId}/tags`, "POST", toCompatPayload(payload));
+  const row = (res as any)?.data ?? res;
   return {
-    status: data?.status || "success",
-    message: data?.message,
+    status: (res as any)?.status || "success",
+    message: (res as any)?.message,
     data: normalizeTagRow(row),
   };
 }
 
-// PATCH update tag (admin)
 export async function updateTag(
   pageId: number | string,
   tagId: number | string,
   payload: UpdateMetaTagPayload
 ): Promise<DetailResponse<MetaTagItem>> {
-  const res = await fetch(`/api/meta/pages/${pageId}/tags/${tagId}`, {
-    method: "PATCH",
-    headers: { ...baseHeaders, "Content-Type": "application/json" },
-    body: JSON.stringify(toCompatPayload(payload)),
-  });
-
-  const text = await res.text();
-  const data = jsonOrEmpty(text);
-  if (!res.ok) throw new Error(data?.message || `Update tag failed (${res.status})`);
-
-  const row = data?.data ?? data;
+  const res = await apiSend<any>(
+    `/api/meta/pages/${pageId}/tags/${tagId}`,
+    "PATCH",
+    toCompatPayload(payload)
+  );
+  const row = (res as any)?.data ?? res;
   return {
-    status: data?.status || "success",
-    message: data?.message,
+    status: (res as any)?.status || "success",
+    message: (res as any)?.message,
     data: normalizeTagRow(row),
   };
 }
 
-// DELETE tag (admin)
 export async function deleteTag(
   pageId: number | string,
   tagId: number | string
-): Promise<{ status?: string; message?: string }> {
-  const res = await fetch(`/api/meta/pages/${pageId}/tags/${tagId}`, {
-    method: "DELETE",
-    headers: baseHeaders,
-  });
-
-  const text = await res.text();
-  const data = jsonOrEmpty(text);
-  if (!res.ok) throw new Error(data?.message || `Delete tag failed (${res.status})`);
-
-  return { status: data?.status || "success", message: data?.message };
+): Promise<{ status: string; message?: string }> {
+  const res = await apiSend<{ status: string; message?: string }>(
+    `/api/meta/pages/${pageId}/tags/${tagId}`,
+    "DELETE"
+  );
+  return { status: (res as any)?.status || "success", message: (res as any)?.message };
 }
