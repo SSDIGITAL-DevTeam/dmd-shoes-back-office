@@ -42,7 +42,12 @@ export default function MetaTagDetailPage() {
       // ✅ panggil dengan object params
       const res = await getPageTags(pageId, { locale });
       const items: MetaTagType[] = (res as any).data?.data ?? (res as any).data ?? [];
-      setTags(items);
+      const normalized = items.map((item) => ({
+        ...item,
+        attr: item.attr ?? (item.key as MetaTagType["attr"]) ?? "name",
+        identifier: item.identifier ?? item.value ?? "",
+      }));
+      setTags(normalized);
     } finally {
       setLoading(false);
     }

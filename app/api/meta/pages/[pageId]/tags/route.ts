@@ -11,17 +11,20 @@ const noStore = {
   Expires: "0",
 } as const;
 
-function makeAuthHeaders(req: NextRequest) {
+function makeAuthHeaders(req: NextRequest, hasBody = false) {
   const h = new Headers();
+
+  // Selalu kirim Accept & XRW seperti modul products
   h.set("Accept", "application/json");
   h.set("X-Requested-With", "XMLHttpRequest");
 
+  // Authorization dari header / cookie access_token
   const auth = req.headers.get("authorization");
   if (auth) h.set("Authorization", auth);
 
   if (!auth) {
-    const raw = req.headers.get("cookie") || "";
-    const token = raw
+    const rawCookie = req.headers.get("cookie") || "";
+    const token = rawCookie
       .split(";")
       .map((s) => s.trim())
       .find((s) => s.startsWith("access_token="))
@@ -29,70 +32,56 @@ function makeAuthHeaders(req: NextRequest) {
     if (token) h.set("Authorization", `Bearer ${decodeURIComponent(token)}`);
   }
 
+  // Content-Type hanya bila ada body
+  if (hasBody) {
+    const ct = req.headers.get("content-type");
+    if (ct) h.set("Content-Type", ct);
+  }
+
+  // Teruskan cookie/origin/referer persis seperti modul products/category
   const cookie = req.headers.get("cookie"); if (cookie) h.set("Cookie", cookie);
   const origin = req.headers.get("origin"); if (origin) h.set("Origin", origin);
   const referer = req.headers.get("referer"); if (referer) h.set("Referer", referer);
+
   return h;
 }
 
-/**
- * GET /api/meta/pages/:pageId/tags
- * → forwards to {{baseURL}}/api/v1/meta/pages/:pageId/tags[?locale=xx]
- */
-export async function GET(
-  req: NextRequest,
-  ctx: { params: Promise<{ pageId: string }> }
-) {
+function passthrough(up: Response) {
+  const ct = up.headers.get("content-type") || "application/json";
+  return up
+    .clone()
+    .text()
+    .then((txt) => new Response(txt || "{}", { status: up.status, headers: { ...noStore, "content-type": ct } }));
+}
+
+// GET /api/meta/pages/:pageId/tags
+export async function GET(_req: NextRequest, { params }: { params: { pageId: string } }) {
   try {
-    const { pageId } = await ctx.params;
-    const { searchParams } = new URL(req.url);
-    const locale = searchParams.get("locale") ?? ""; // optional
-
-    const qs = new URLSearchParams();
-    if (locale) qs.set("locale", locale);
-
-    const url = makeApiUrl(
-      `/meta/pages/${encodeURIComponent(pageId)}/tags${qs.toString() ? `?${qs}` : ""}`
-    );
-
-    const res = await fetch(url, {
+    const url = makeApiUrl(`meta/pages/${encodeURIComponent(params.pageId)}/tags`);
+    const up = await fetch(url, {
       method: "GET",
-      headers: makeAuthHeaders(req),
+      headers: makeAuthHeaders(_req, false),
       cache: "no-store",
       // @ts-ignore
       next: { revalidate: 0 },
       credentials: "include",
     });
-
-    const body = await res.text().catch(() => "");
-    return new Response(body || "{}", { status: res.status, headers: noStore });
+    return passthrough(up);
   } catch (e: any) {
-    return NextResponse.json(
-      { status: "error", message: e?.message || "Proxy GET /meta/pages/:pageId/tags failed" },
-      { status: 502, headers: noStore }
-    );
+    return NextResponse.json({ status: "error", message: e?.message || "Proxy GET meta tags failed" }, { status: 502, headers: noStore });
   }
 }
 
-/**
- * POST /api/meta/pages/:pageId/tags
- * → forwards to {{baseURL}}/api/v1/meta/pages/:pageId/tags
- * (body diteruskan apa adanya; gunakan JSON atau form-data sesuai backend)
- */
-export async function POST(
-  req: NextRequest,
-  ctx: { params: Promise<{ pageId: string }> }
-) {
+// POST /api/meta/pages/:pageId/tags
+export async function POST(req: NextRequest, { params }: { params: { pageId: string } }) {
   try {
-    const { pageId } = await ctx.params;
-    const body = await req.text(); // pass-through body persis
-    const url = makeApiUrl(`/meta/pages/${encodeURIComponent(pageId)}/tags`);
+    const body = await req.text(); // pass-through body (JSON/FormData)
+    const url = makeApiUrl(`meta/pages/${encodeURIComponent(params.pageId)}/tags`);
 
-    const res = await fetch(url, {
+    const up = await fetch(url, {
       method: "POST",
-      headers: makeAuthHeaders(req),
+      headers: makeAuthHeaders(req, true),
       body,
-      // penting untuk request ber-body di Node fetch
       // @ts-ignore
       duplex: "half",
       cache: "no-store",
@@ -100,13 +89,8 @@ export async function POST(
       next: { revalidate: 0 },
       credentials: "include",
     });
-
-    const txt = await res.text().catch(() => "");
-    return new Response(txt || "{}", { status: res.status, headers: noStore });
+    return passthrough(up);
   } catch (e: any) {
-    return NextResponse.json(
-      { status: "error", message: e?.message || "Proxy POST /meta/pages/:pageId/tags failed" },
-      { status: 502, headers: noStore }
-    );
+    return NextResponse.json({ status: "error", message: e?.message || "Proxy POST meta tags failed" }, { status: 502, headers: noStore });
   }
 }
