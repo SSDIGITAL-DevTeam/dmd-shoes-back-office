@@ -8,10 +8,10 @@ import { useParams, useRouter } from "next/navigation";
 type ApiCategory = {
   id: number;
   parent_id: number | null;
-  name?: { id?: string; en?: string };
+  name?: { id?: string; en?: string } | string;
   name_text?: string;
   slug?: string;
-  status?: boolean;
+  status?: boolean | number | string;
   cover?: string | null;
   cover_url?: string | null;
 };
@@ -20,21 +20,63 @@ type FormState = {
   name_id: string;
   name_en: string;
   slug: string;
-  parent_id: string;
+  parent_id: string; // empty = null
   status: boolean;
   cover_url: string;
 };
 
 const withNoCache = (url: string) => `${url}${url.includes("?") ? "&" : "?"}_=${Date.now()}`;
 
-async function fetchJSON(input: string, init?: RequestInit) {
+/** =========================================
+ *  Fetch helper tahan-banting (JSON / non-JSON)
+ *  ========================================= */
+async function apiFetch(input: RequestInfo | URL, init?: RequestInit) {
   const headers = new Headers(init?.headers || {});
+  // jangan set Content-Type saat kirim FormData (biarkan browser set boundary)
+  if (!(init?.body instanceof FormData)) {
+    headers.set("Content-Type", headers.get("Content-Type") || "application/json");
+  }
   headers.set("Accept", "application/json");
   headers.set("X-Requested-With", "XMLHttpRequest");
-  const res = await fetch(input, { ...init, headers, credentials: "include", cache: "no-store" });
-  const text = await res.text().catch(() => "");
-  const data = text ? JSON.parse(text) : {};
-  return { ok: res.ok, status: res.status, data };
+
+  const res = await fetch(input, {
+    ...init,
+    headers,
+    credentials: "include",
+    cache: "no-store",
+  });
+
+  const contentType = res.headers.get("content-type") || "";
+  const raw = await res.text().catch(() => "");
+
+  let data: any = null;
+  if (contentType.includes("application/json")) {
+    try {
+      data = raw ? JSON.parse(raw) : null;
+    } catch {
+      // biarkan data null, tapi kita tetap simpan raw untuk debug
+    }
+  }
+
+  return {
+    ok: res.ok,
+    status: res.status,
+    headers: res.headers,
+    data,
+    text: raw,
+    isJson: !!data,
+  };
+}
+
+/** Cek error dan kembalikan pesan yang manusiawi */
+function pickErrorMessage(status: number, data: any, text: string) {
+  if (data && (data.message || data.error)) return String(data.message || data.error);
+  let msg = `Request failed (${status})`;
+  if (!data && text) {
+    const snippet = text.slice(0, 220).replace(/\s+/g, " ");
+    msg += ` — non-JSON: ${snippet}`;
+  }
+  return msg;
 }
 
 export default function EditCategoryPage() {
@@ -72,9 +114,12 @@ export default function EditCategoryPage() {
       setError(null);
       try {
         const [listRes, parentsRes] = await Promise.all([
-          fetchJSON(withNoCache(`/api/category?perPage=100`)),
-          fetchJSON(withNoCache(`/api/category?status=active&perPage=100`)),
+          apiFetch(withNoCache(`/api/category?perPage=100`), { method: "GET" }),
+          apiFetch(withNoCache(`/api/category?status=active&perPage=100`), { method: "GET" }),
         ]);
+
+        if (!listRes.ok) throw new Error(pickErrorMessage(listRes.status, listRes.data, listRes.text));
+        if (!parentsRes.ok) throw new Error(pickErrorMessage(parentsRes.status, parentsRes.data, parentsRes.text));
 
         const list: ApiCategory[] =
           Array.isArray(listRes.data?.data)
@@ -94,33 +139,33 @@ export default function EditCategoryPage() {
             ? parentsRes.data.data.data
             : [];
 
-        // filter parent: hanya yang top-level & bukan dirinya sendiri
         const topLevelParents = parentsRaw.filter((p) => !p.parent_id && p.id !== id);
 
+        const found = list.find((c) => c.id === id);
+        if (!found) throw new Error("Category not found");
+
         if (!mounted) return;
+
         setParentCategories(topLevelParents);
 
-        // detail kategori yg diedit
-        const found = list.find((c) => c.id === id);
-        if (found) {
-          const foundParent =
-            found.parent_id && found.parent_id !== found.id ? String(found.parent_id) : "";
+        const statusBool =
+          typeof found.status === "boolean"
+            ? found.status
+            : String(found.status) === "1" || String(found.status).toLowerCase() === "active";
 
-          setFormData({
-            name_id: found.name?.id || found.name_text || "",
-            name_en: found.name?.en || "",
-            slug: found.slug || "",
-            parent_id: foundParent,
-            status: !!found.status,
-            cover_url: found.cover_url || found.cover || "",
-          });
-        } else {
-          setError("Category not found");
-        }
+        setFormData({
+          name_id: (typeof found.name === "string" ? found.name : found.name?.id) || found.name_text || "",
+          name_en: (typeof found.name === "string" ? "" : found.name?.en) || "",
+          slug: found.slug || "",
+          parent_id: found.parent_id && found.parent_id !== found.id ? String(found.parent_id) : "",
+          status: !!statusBool,
+          cover_url: found.cover_url || found.cover || "",
+        });
       } catch (e: any) {
+        if (!mounted) return;
         setError(e?.message || "Failed to load");
       } finally {
-        setLoading(false);
+        if (mounted) setLoading(false);
       }
     })();
     return () => {
@@ -140,18 +185,20 @@ export default function EditCategoryPage() {
 
     try {
       const url = `/api/category/${id}`;
-      let res: Response;
 
+      let res;
       if (coverFile) {
+        // FormData + _method lebih kompatibel di Laravel utk file update
         const fd = new FormData();
         fd.append("name[id]", formData.name_id);
         fd.append("name[en]", formData.name_en);
         if (formData.slug) fd.append("slug", formData.slug);
-        if (formData.parent_id) fd.append("parent_id", String(Number(formData.parent_id)));
+        fd.append("parent_id", formData.parent_id ? String(Number(formData.parent_id)) : "");
         fd.append("status", formData.status ? "1" : "0");
         fd.append("cover", coverFile);
+        fd.append("_method", "PATCH"); // atau "PATCH" sesuai backend
 
-        res = await fetch(url, { method: "PATCH", body: fd, credentials: "include", cache: "no-store" });
+        res = await apiFetch(url, { method: "POST", body: fd });
       } else {
         const payload = {
           name: { id: formData.name_id, en: formData.name_en },
@@ -160,22 +207,17 @@ export default function EditCategoryPage() {
           status: !!formData.status,
         };
 
-        res = await fetch(url, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json", Accept: "application/json" },
+        res = await apiFetch(url, {
+          method: "PATCH", // kalau backend pakai PATCH, ganti ke PATCH
           body: JSON.stringify(payload),
-          credentials: "include",
-          cache: "no-store",
         });
       }
 
-      const txt = await res.text().catch(() => "");
-      const json = txt ? JSON.parse(txt) : {};
-      if (!res.ok) throw new Error(json?.message || `Failed to update (${res.status})`);
+      if (!res.ok) throw new Error(pickErrorMessage(res.status, res.data, res.text));
 
-      console.log("✅ Category updated:", { id, response: json });
+      console.log("✅ Category updated:", { id, response: res.data ?? res.text });
       router.push("/product-category");
-      router.refresh(); // 🔄 paksa re-fetch data di App Router
+      router.refresh();
     } catch (e: any) {
       console.error("❌ Error updating category:", e);
       setError(e?.message || "Failed to update");
@@ -185,11 +227,8 @@ export default function EditCategoryPage() {
   const handleDelete = async () => {
     if (!confirm("Delete this category?")) return;
     try {
-      const res = await fetch(withNoCache(`/api/category/${id}`), { method: "DELETE", credentials: "include" });
-      if (!res.ok) {
-        const msg = await res.text().catch(() => "");
-        throw new Error(msg || `Failed to delete (${res.status})`);
-      }
+      const res = await apiFetch(withNoCache(`/api/category/${id}`), { method: "DELETE" });
+      if (!res.ok) throw new Error(pickErrorMessage(res.status, res.data, res.text));
       router.push("/product-category");
       router.refresh();
     } catch (e: any) {
@@ -296,7 +335,7 @@ export default function EditCategoryPage() {
                         <option key={c.id} value={c.id}>
                           {typeof c.name === "string"
                             ? c.name
-                            : c.name?.id || c.name?.en || `#${c.id}`}
+                            : c.name?.id || (c as any).name_text || (c as any).name?.en || `#${c.id}`}
                         </option>
                       ))}
                     </select>
@@ -332,8 +371,7 @@ export default function EditCategoryPage() {
                         alt="Cover preview"
                         className="h-28 w-full max-w-xs rounded border object-cover"
                         onLoad={(e) => {
-                          if (coverFile)
-                            URL.revokeObjectURL((e.target as HTMLImageElement).src);
+                          if (coverFile) URL.revokeObjectURL((e.target as HTMLImageElement).src);
                         }}
                       />
                     </div>
@@ -345,7 +383,7 @@ export default function EditCategoryPage() {
 
           <div className="mt-8 flex items-center gap-4">
             <DraftButton onClick={handleSaveChanges}>Save Changes</DraftButton>
-            <CancelButton onClick={() => router.push("/product-category")} />
+            <CancelButton onClick={handleCancel} />
           </div>
         </div>
       </div>
