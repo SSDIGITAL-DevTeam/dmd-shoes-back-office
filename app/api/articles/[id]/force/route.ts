@@ -1,46 +1,69 @@
 // app/api/articles/[id]/force/route.ts
-import { ensureEnvOrThrow, makeApiUrl } from "../../../../_utils/backend";
-
-function passthrough(res: Response) {
-  const ct = res.headers.get("content-type") || "application/json";
-  return res.clone().text().then((txt) =>
-    new Response(txt, { status: res.status, headers: { "content-type": ct } })
-  );
-}
-
-// (opsional, biar gak ke-cache)
-export const dynamic = "force-dynamic";
-// (opsional, kalau butuh Node runtime)
 export const runtime = "nodejs";
 
-export async function DELETE(req: Request) {
-  ensureEnvOrThrow();
+import { NextRequest, NextResponse } from "next/server";
+import { ensureEnvOrThrow, makeApiUrl, readCookie } from "../../../../_utils/backend";
 
-  // Ambil id dari URL tanpa butuh argumen context
-  const url = new URL(req.url);
-  // Contoh path: /api/articles/123/force
-  // cari segmen setelah "articles"
-  const segments = url.pathname.split("/").filter(Boolean);
-  const idx = segments.lastIndexOf("articles");
-  const id = idx >= 0 && segments[idx + 1] ? segments[idx + 1] : null;
+const noStore = {
+  "content-type": "application/json",
+  "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+  Pragma: "no-cache",
+  Expires: "0",
+} as const;
 
-  if (!id) {
-    return new Response(
-      JSON.stringify({ status: "error", message: "Missing article id in URL" }),
-      { status: 400, headers: { "content-type": "application/json" } }
+function resolveAuth(req: NextRequest) {
+  const fromHeader = req.headers.get("authorization");
+  if (fromHeader) return fromHeader;
+  const bearer = readCookie(req.headers.get("cookie") || "", "access_token");
+  if (bearer) return `Bearer ${bearer}`;
+  return undefined;
+}
+
+/** Helper: parse backend response safely (json or text) */
+async function parseSafe(res: Response) {
+  try {
+    return await res.clone().json();
+  } catch {
+    try {
+      return await res.clone().text();
+    } catch {
+      return {};
+    }
+  }
+}
+
+function baseHeaders(req: NextRequest) {
+  return {
+    Accept: "application/json",
+    "X-Requested-With": "XMLHttpRequest",
+    ...(resolveAuth(req) ? { Authorization: resolveAuth(req)! } : {}),
+  } as Record<string, string>;
+}
+
+/* ===================== DELETE (force delete) ===================== */
+export async function DELETE(
+  req: NextRequest,
+  ctx: { params: Promise<{ id: string }> }
+) {
+  try {
+    ensureEnvOrThrow();
+    const { id } = await ctx.params;
+
+    const upstream = await fetch(makeApiUrl(`articles/${id}/force`), {
+      method: "DELETE",
+      headers: baseHeaders(req),
+      cache: "no-store",
+    });
+
+    const data = (await parseSafe(upstream)) ?? {};
+    return new NextResponse(typeof data === "string" ? data : JSON.stringify(data), {
+      status: upstream.status || 200,
+      headers: noStore,
+    });
+  } catch (e: any) {
+    return NextResponse.json(
+      { status: "error", message: e?.message || "Failed to force delete article" },
+      { status: 500, headers: noStore }
     );
   }
-
-  const upstream = await fetch(makeApiUrl(`articles/${id}/force`), {
-    method: "DELETE",
-    headers: {
-      Accept: "application/json",
-      Cookie: req.headers.get("cookie") ?? "",
-      Authorization: req.headers.get("authorization") ?? "",
-      "X-Requested-With": "XMLHttpRequest",
-    },
-    // cache: "no-store",
-  });
-
-  return passthrough(upstream);
 }

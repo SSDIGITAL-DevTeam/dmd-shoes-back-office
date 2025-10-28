@@ -1,13 +1,40 @@
 import { NextRequest } from "next/server";
-import { ensureEnvOrThrow, makeApiUrl } from "../../_utils/backend";
+import { ensureEnvOrThrow, makeApiUrl, readCookie } from "../../_utils/backend";
 
+/** Passthrough: teruskan body+status apa adanya dari upstream */
 function passthrough(res: Response) {
-  // helper untuk meneruskan status + body apa adanya
   const ct = res.headers.get("content-type") || "application/json";
-  return res
-    .clone()
-    .text()
-    .then((txt) => new Response(txt, { status: res.status, headers: { "content-type": ct } }));
+  return res.clone().text().then((txt) =>
+    new Response(txt, { status: res.status, headers: { "content-type": ct } })
+  );
+}
+
+/** Ambil token dari Authorization header atau cookie access_token */
+function resolveAuth(req: NextRequest): string | undefined {
+  const fromHeader = req.headers.get("authorization");
+  if (fromHeader && fromHeader.trim()) return fromHeader; // e.g. "Bearer xxx"
+  const bearer = readCookie(req.headers.get("cookie") || "", "access_token");
+  if (bearer && bearer.trim()) return `Bearer ${bearer}`;
+  return undefined;
+}
+
+/** Bangun header untuk forward ke upstream, hanya set Authorization jika ada token */
+function buildUpstreamHeaders(req: NextRequest, extra?: Record<string, string>) {
+  const h = new Headers();
+  h.set("Accept", "application/json");
+  h.set("X-Requested-With", "XMLHttpRequest");
+
+  // Kirim Cookie hanya jika kamu memang masih membutuhkan cookie di upstream
+  const cookie = req.headers.get("cookie");
+  if (cookie) h.set("Cookie", cookie);
+
+  const auth = resolveAuth(req);
+  if (auth) h.set("Authorization", auth);
+
+  if (extra) {
+    for (const [k, v] of Object.entries(extra)) h.set(k, v);
+  }
+  return h;
 }
 
 export async function GET(req: NextRequest) {
@@ -22,20 +49,17 @@ export async function GET(req: NextRequest) {
 
   const qs = new URLSearchParams({ page, per_page: perPage });
   if (search) qs.set("search", search);
-  if (status) qs.set("status", status); // publish|draft
-  if (lang) qs.set("lang", lang);     // id|en
+  if (status) qs.set("status", status);
+  if (lang) qs.set("lang", lang);
 
   try {
     const upstream = await fetch(makeApiUrl(`articles?${qs.toString()}`), {
-      headers: {
-        Accept: "application/json",
-        // forward auth bila perlu
-        Cookie: req.headers.get("cookie") ?? "",
-        Authorization: req.headers.get("authorization") ?? "",
-      },
+      method: "GET",
+      headers: buildUpstreamHeaders(req),
+      // credentials tidak diperlukan di server-side fetch, cookie sudah dipasang manual
     });
     return await passthrough(upstream);
-  } catch (e) {
+  } catch {
     return Response.json({ status: "error", message: "Upstream unavailable" }, { status: 502 });
   }
 }
@@ -46,12 +70,12 @@ export async function POST(req: NextRequest) {
   const contentType = req.headers.get("content-type") || "";
   let init: RequestInit;
 
-  if (contentType.includes("multipart/form-data")) {
-    // support upload cover (file)
+  if (contentType.toLowerCase().includes("multipart/form-data")) {
+    // FormData (biarkan boundary di-set otomatis)
     const form = await req.formData();
     init = { method: "POST", body: form };
   } else {
-    // JSON (mis. cover_url)
+    // JSON
     const payload = await req.json().catch(() => ({}));
     init = {
       method: "POST",
@@ -60,13 +84,9 @@ export async function POST(req: NextRequest) {
     };
   }
 
-  // forward auth bila perlu
-  init.headers = {
-    ...(init.headers as Record<string, string>),
-    Accept: "application/json",
-    Cookie: req.headers.get("cookie") ?? "",
-    Authorization: req.headers.get("authorization") ?? "",
-  };
+  // Tambah header standar + Authorization (jika ada)
+  const headers = buildUpstreamHeaders(req, (init.headers as Record<string, string>) || undefined);
+  init.headers = headers;
 
   try {
     const upstream = await fetch(makeApiUrl("articles"), init);

@@ -1,108 +1,240 @@
 // app/api/articles/[id]/route.ts
-import { ensureEnvOrThrow, makeApiUrl } from "../../../_utils/backend";
-
-function passthrough(res: Response) {
-  const ct = res.headers.get("content-type") || "application/json";
-  return res
-    .clone()
-    .text()
-    .then((txt) => new Response(txt, { status: res.status, headers: { "content-type": ct } }));
-}
-
-// Opsional: hindari cache & pastikan Node runtime
-export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
-function extractArticleIdFromUrl(url: string): string | null {
-  const u = new URL(url);
-  // path contoh: /api/articles/123 -> segmen: ["api","articles","123"]
-  const seg = u.pathname.split("/").filter(Boolean);
-  const idx = seg.lastIndexOf("articles");
-  return idx >= 0 && seg[idx + 1] ? seg[idx + 1] : null;
+import { NextRequest, NextResponse } from "next/server";
+import { ensureEnvOrThrow, makeApiUrl, readCookie } from "../../../_utils/backend";
+
+const noStore = {
+  "content-type": "application/json",
+  "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+  Pragma: "no-cache",
+  Expires: "0",
+} as const;
+
+function resolveAuth(req: NextRequest) {
+  const fromHeader = req.headers.get("authorization");
+  if (fromHeader) return fromHeader;
+  const bearer = readCookie(req.headers.get("cookie") || "", "access_token");
+  if (bearer) return `Bearer ${bearer}`;
+  return undefined;
 }
 
-function forwardBaseHeaders(req: Request): HeadersInit {
+/** Helper: build backend URL + carry all search params */
+function buildBackendUrl(req: NextRequest, id: string) {
+  const be = new URL(makeApiUrl(`articles/${id}`));
+  req.nextUrl.searchParams.forEach((v, k) => be.searchParams.set(k, v));
+  return be.toString();
+}
+
+/** Helper: parse backend response safely (json or text) */
+async function parseSafe(res: Response) {
+  try {
+    return await res.clone().json();
+  } catch {
+    try {
+      return await res.clone().text();
+    } catch {
+      return {};
+    }
+  }
+}
+
+function baseHeaders(req: NextRequest) {
   return {
     Accept: "application/json",
-    Cookie: req.headers.get("cookie") ?? "",
-    Authorization: req.headers.get("authorization") ?? "",
     "X-Requested-With": "XMLHttpRequest",
-  };
+    ...(resolveAuth(req) ? { Authorization: resolveAuth(req)! } : {}),
+  } as Record<string, string>;
 }
 
-/* ===================== GET ===================== */
-export async function GET(req: Request) {
-  ensureEnvOrThrow();
-  const id = extractArticleIdFromUrl(req.url);
-  if (!id) {
-    return Response.json({ status: "error", message: "Missing article id" }, { status: 400 });
+function makeForwardInit(
+  method: "PATCH" | "PUT" | "POST",
+  req: NextRequest,
+  contentType: string
+): RequestInit & { duplex?: "half" } {
+  const headersToSend: Record<string, string> = { ...baseHeaders(req) };
+  let body: BodyInit | null = null;
+
+  if (contentType.toLowerCase().startsWith("multipart/form-data")) {
+    headersToSend["Content-Type"] = contentType; // keep boundary
+    body = req.body as any; // ReadableStream
+  } else if (contentType.includes("application/json")) {
+    // robust read (will be awaited in handler)
+    body = (req as any)
+      .clone()
+      .text()
+      .catch(async () =>
+        (await (req as any).clone().json()).then(JSON.stringify).catch(() => "{}")
+      );
+    headersToSend["Content-Type"] = "application/json";
+  } else if (contentType) {
+    headersToSend["Content-Type"] = contentType;
+    body = req.body as any;
   }
 
+  const init: RequestInit & { duplex?: "half" } = {
+    method,
+    headers: headersToSend,
+    body,
+    cache: "no-store",
+  };
+
+  return init;
+}
+
+/** GET detail article */
+export async function GET(
+  req: NextRequest,
+  ctx: { params: Promise<{ id: string }> }
+) {
   try {
-    const upstream = await fetch(makeApiUrl(`articles/${id}`), {
-      headers: forwardBaseHeaders(req),
+    ensureEnvOrThrow();
+    const { id } = await ctx.params;
+
+    const res = await fetch(buildBackendUrl(req, id), {
+      method: "GET",
+      headers: baseHeaders(req),
       cache: "no-store",
     });
-    return passthrough(upstream);
-  } catch {
-    return Response.json({ status: "error", message: "Upstream unavailable" }, { status: 502 });
+
+    const data = (await parseSafe(res)) ?? {};
+    return new NextResponse(typeof data === "string" ? data : JSON.stringify(data), {
+      status: res.status || 200,
+      headers: noStore,
+    });
+  } catch (e: any) {
+    return NextResponse.json(
+      { status: "error", message: e?.message || "Failed to fetch article" },
+      { status: 500, headers: noStore }
+    );
   }
 }
 
-/* ===================== PUT ===================== */
-export async function PUT(req: Request) {
-  ensureEnvOrThrow();
-  const id = extractArticleIdFromUrl(req.url);
-  if (!id) {
-    return Response.json({ status: "error", message: "Missing article id" }, { status: 400 });
-  }
-
-  const contentType = req.headers.get("content-type") || "";
-  let init: RequestInit = { method: "PUT", headers: { ...forwardBaseHeaders(req) } };
-
+/** Forward PATCH with support for JSON or multipart/form-data */
+export async function PATCH(
+  req: NextRequest,
+  ctx: { params: Promise<{ id: string }> }
+) {
   try {
-    if (contentType.includes("multipart/form-data")) {
-      // Biarkan runtime menetapkan boundary — JANGAN set Content-Type manual
-      const form = await req.formData();
-      init.body = form;
-    } else if (contentType.includes("application/json")) {
-      const json = await req.json().catch(() => ({}));
-      (init.headers as Record<string, string>)["Content-Type"] = "application/json";
-      init.body = JSON.stringify(json);
-    } else if (contentType.includes("application/x-www-form-urlencoded")) {
-      const text = await req.text();
-      (init.headers as Record<string, string>)["Content-Type"] =
-        "application/x-www-form-urlencoded";
-      init.body = text;
-    } else {
-      // fallback aman: pass-through sebagai binary
-      const buf = await req.arrayBuffer();
-      init.body = buf;
-      // Content-Type dibiarkan kosong (backend bisa menebak / tidak perlu)
+    ensureEnvOrThrow();
+    const { id } = await ctx.params;
+    const contentType = req.headers.get("content-type") || "";
+    const init = makeForwardInit("PATCH", req, contentType);
+
+    // penting: Node/undici butuh duplex saat streaming
+    if (init.body && typeof (init.body as any).getReader === "function") {
+      init.duplex = "half";
+    }
+    // jika init.body adalah Promise<string> (JSON), selesaikan terlebih dulu
+    if (init.body && typeof (init.body as any).then === "function") {
+      init.body = await (init.body as any);
     }
 
-    const upstream = await fetch(makeApiUrl(`articles/${id}`), init);
-    return passthrough(upstream);
-  } catch {
-    return Response.json({ status: "error", message: "Upstream unavailable" }, { status: 502 });
+    const res = await fetch(buildBackendUrl(req, id), init);
+
+    const data = (await parseSafe(res)) ?? {};
+    return new NextResponse(typeof data === "string" ? data : JSON.stringify(data), {
+      status: res.status || 200,
+      headers: noStore,
+    });
+  } catch (e: any) {
+    return NextResponse.json(
+      { status: "error", message: e?.message || "Failed to update article" },
+      { status: 500, headers: noStore }
+    );
   }
 }
 
-/* ===================== DELETE ===================== */
-export async function DELETE(req: Request) {
-  ensureEnvOrThrow();
-  const id = extractArticleIdFromUrl(req.url);
-  if (!id) {
-    return Response.json({ status: "error", message: "Missing article id" }, { status: 400 });
-  }
-
+/** Some backends use PUT for update */
+export async function PUT(
+  req: NextRequest,
+  ctx: { params: Promise<{ id: string }> }
+) {
   try {
-    const upstream = await fetch(makeApiUrl(`articles/${id}`), {
-      method: "DELETE",
-      headers: forwardBaseHeaders(req),
+    ensureEnvOrThrow();
+    const { id } = await ctx.params;
+    const contentType = req.headers.get("content-type") || "";
+    const init = makeForwardInit("PUT", req, contentType);
+
+    if (init.body && typeof (init.body as any).getReader === "function") {
+      init.duplex = "half";
+    }
+    if (init.body && typeof (init.body as any).then === "function") {
+      init.body = await (init.body as any);
+    }
+
+    const res = await fetch(buildBackendUrl(req, id), init);
+
+    const data = (await parseSafe(res)) ?? {};
+    return new NextResponse(typeof data === "string" ? data : JSON.stringify(data), {
+      status: res.status || 200,
+      headers: noStore,
     });
-    return passthrough(upstream);
-  } catch {
-    return Response.json({ status: "error", message: "Upstream unavailable" }, { status: 502 });
+  } catch (e: any) {
+    return NextResponse.json(
+      { status: "error", message: e?.message || "Failed to update article" },
+      { status: 500, headers: noStore }
+    );
+  }
+}
+
+/** Allow POST (for backends expecting POST + _method override) */
+export async function POST(
+  req: NextRequest,
+  ctx: { params: Promise<{ id: string }> }
+) {
+  try {
+    ensureEnvOrThrow();
+    const { id } = await ctx.params;
+    const contentType = req.headers.get("content-type") || "";
+    const init = makeForwardInit("POST", req, contentType);
+
+    if (init.body && typeof (init.body as any).getReader === "function") {
+      init.duplex = "half";
+    }
+    if (init.body && typeof (init.body as any).then === "function") {
+      init.body = await (init.body as any);
+    }
+
+    const res = await fetch(buildBackendUrl(req, id), init);
+
+    const data = (await parseSafe(res)) ?? {};
+    return new NextResponse(typeof data === "string" ? data : JSON.stringify(data), {
+      status: res.status || 200,
+      headers: noStore,
+    });
+  } catch (e: any) {
+    return NextResponse.json(
+      { status: "error", message: e?.message || "Failed to update article (POST)" },
+      { status: 500, headers: noStore }
+    );
+  }
+}
+
+/** DELETE article */
+export async function DELETE(
+  req: NextRequest,
+  ctx: { params: Promise<{ id: string }> }
+) {
+  try {
+    ensureEnvOrThrow();
+    const { id } = await ctx.params;
+
+    const res = await fetch(buildBackendUrl(req, id), {
+      method: "DELETE",
+      headers: baseHeaders(req),
+      cache: "no-store",
+    });
+
+    const data = (await parseSafe(res)) ?? {};
+    return new NextResponse(typeof data === "string" ? data : JSON.stringify(data), {
+      status: res.status || 200,
+      headers: noStore,
+    });
+  } catch (e: any) {
+    return NextResponse.json(
+      { status: "error", message: e?.message || "Failed to delete article" },
+      { status: 500, headers: noStore }
+    );
   }
 }

@@ -1,50 +1,42 @@
 // app/(admin)/api/articles/[id]/toggle/route.ts
+export const runtime = "nodejs";
+
 import { NextRequest, NextResponse } from "next/server";
-import { ensureEnvOrThrow, makeApiUrl } from "../../../../_utils/backend";
+import { ensureEnvOrThrow, makeApiUrl, readCookie } from "../../../../_utils/backend";
 
-function fwd(req: NextRequest) {
-    return {
-        Accept: "application/json",
-        Cookie: req.headers.get("cookie") ?? "",
-        Authorization: req.headers.get("authorization") ?? "",
-        Origin: req.headers.get("origin") ?? "",
-        Referer: req.headers.get("referer") ?? "",
-        "X-Requested-With": "XMLHttpRequest",
-    };
-}
-
+/** PATCH /api/articles/:id/toggle  →  Laravel: PATCH /api/v1/articles/:id/status */
 export async function PATCH(
-    req: NextRequest,
-    ctx: { params: Promise<{ id: string }> }
+  req: NextRequest,
+  ctx: { params: Promise<{ id: string }> }
 ) {
+  try {
     ensureEnvOrThrow();
-
     const { id } = await ctx.params;
-    const url = new URL(req.url);
-    const lang = url.searchParams.get("lang") || "";
+
+    // ambil body JSON; jika invalid/empty fallback {}
     const body = await req.json().catch(() => ({}));
 
-    const upstreamUrl = makeApiUrl(`articles/${id}/status`);
-    const res = await fetch(upstreamUrl, {
-        method: "PATCH",
-        headers: { ...fwd(req), "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-        cache: "no-store",
+    // ambil bearer token dari cookie access_token (format sama dengan product route)
+    const cookie = req.headers.get("cookie") || "";
+    const bearer = readCookie(cookie, "access_token");
+
+    // forward ke backend
+    const res = await fetch(makeApiUrl(`articles/${id}/status`), {
+      method: "PATCH",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+        ...(bearer ? { Authorization: `Bearer ${bearer}` } : {}),
+      },
+      body: JSON.stringify(body), // contoh: { status: true/false } atau { status: "publish"/"draft" }
     });
 
-    const ct = res.headers.get("content-type") || "";
-    const payload = ct.includes("json") ? await res.json() : await res.text();
-
-    if (!res.ok) {
-        return NextResponse.json(payload, { status: res.status });
-    }
-
-    const detailUrl = makeApiUrl(`articles/${id}${lang ? `?lang=${encodeURIComponent(lang)}` : ""}`);
-    const detailRes = await fetch(detailUrl, { headers: fwd(req), cache: "no-store" });
-    const detail = await detailRes.json().catch(() => ({}));
-
+    const json = await res.json().catch(() => ({}));
+    return NextResponse.json(json, { status: res.status || 200 });
+  } catch (e: any) {
     return NextResponse.json(
-        { status: "success", message: "Status updated", data: detail?.data ?? detail },
-        { status: 200 }
+      { status: "error", message: e?.message || "Failed to update status" },
+      { status: 500 }
     );
+  }
 }
